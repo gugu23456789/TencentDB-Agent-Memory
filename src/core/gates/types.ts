@@ -30,7 +30,7 @@ export interface AuditGateOptions {
   onDrop?: (entry: AuditEntry) => void;
 }
 export const DEFAULT_AUDIT_OPTIONS: AuditGateOptions = {
-  maxBufferSize: 1024, intervalMs: 5000, sampleRate: 0.1,
+  maxBufferSize: 1024, intervalMs: 5000, sampleRate: 1.0,
 };
 export class CircuitOpenError extends Error {
   constructor(public readonly retryAfterMs: number) {
