@@ -173,7 +173,8 @@ jobs:
         run: npx vitest run src/core/gates/gate-rate-limit.test.ts src/core/gates/gate-circuit-breaker.test.ts src/core/gates/gate-audit.test.ts src/core/gates/gate-redteam.test.ts --reporter=verbose
 
       - name: Run SDK tests (v1.0.0 base)
-        run: npx vitest run --config sdk/typescript/vitest.config.ts --reporter=verbose
+        working-directory: sdk/typescript
+        run: npx vitest run --reporter=verbose
 
       - name: Run Utils tests (v1.0.0 base)
         run: npx vitest run src/utils/no-think-fetch.test.ts src/utils/sanitize.test.ts src/utils/time.test.ts --reporter=verbose
