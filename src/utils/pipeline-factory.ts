@@ -36,34 +36,9 @@ import { SceneExtractor } from "../core/scene/scene-extractor.js";
 import { PersonaTrigger } from "../core/persona/persona-trigger.js";
 import { PersonaGenerator } from "../core/persona/persona-generator.js";
 import { pullProfilesToLocal, syncLocalProfilesToStore } from "../core/profile/profile-sync.js";
-import type { StorageAdapter } from "../core/storage/adapter.js";
 import type { Logger } from "../core/types.js";
 
 const TAG = "[memory-tdai] [pipeline-factory]";
-
-// ============================
-// L1 batch sizing constants
-// ============================
-//
-// Each L1 run consumes at most `L1_BATCH_PROCESS` L0 rows past the cursor.
-// The runner over-fetches `L1_BATCH_QUERY` (= 2 * L1_BATCH_PROCESS) rows so
-// it can detect backlog from the query result without an extra round-trip:
-//   - returned R == L1_BATCH_QUERY → DB very likely has many more rows;
-//     pipeline-manager / executor immediately enqueues the next L1 round.
-//   - L1_BATCH_PROCESS < R < L1_BATCH_QUERY → small tail; pipeline-manager
-//     defers via the existing l1Idle timer (reuses the standard idle path).
-//   - R <= L1_BATCH_PROCESS → fully consumed; nothing to do.
-//
-// Constants live here because both the standalone runner (this file) and
-// the service-mode worker (gateway/server.ts) depend on the same
-// over-fetch-by-1x semantic to recognize backlog.
-// Aligned with l1-extractor's maxMessagesPerExtraction (default 10) so that
-// every L0 row in the batch is seen by the LLM as a "new" message.
-// Previous value of 20 caused the extractor's slice(-10) to silently
-// truncate the first 5 rows per batch. Trade-off: drain rounds double
-// under backlog, but zero data loss.
-export const L1_BATCH_PROCESS = 10;
-export const L1_BATCH_QUERY = L1_BATCH_PROCESS * 2;
 
 function supportsProfileSyncWrite(store?: IMemoryStore): boolean {
   return !!(store?.syncProfiles || store?.deleteProfiles);
@@ -122,12 +97,8 @@ export interface PipelineInstance {
 /**
  * Ensure all required data subdirectories exist under `pluginDataDir`.
  * Safe to call multiple times (mkdirSync with `recursive: true`).
- *
- * When a StorageAdapter is provided, local directory creation is skipped
- * because files are stored remotely (COS). The backend handles path creation.
  */
-export function initDataDirectories(dataDir: string, storage?: StorageAdapter): void {
-  if (storage) return; // COS mode: no local directories needed
+export function initDataDirectories(dataDir: string): void {
   const dirs = ["conversations", "records", "scene_blocks", ".metadata", ".backup"];
   for (const sub of dirs) {
     fs.mkdirSync(path.join(dataDir, sub), { recursive: true });
@@ -219,7 +190,9 @@ async function _doInitStores(
     const initResult = await vectorStore.init(providerInfo);
 
     if (vectorStore.isDegraded()) {
-      throw new Error(`${TAG} VectorStore is in degraded mode — refusing to proceed without functional store`);
+      logger.warn(`${TAG} Store is in degraded mode, falling back to keyword dedup`);
+      vectorStore = undefined;
+      embeddingService = undefined;
     } else {
       logger.debug?.(
         `${TAG} Store initialized: backend=${cfg.storeBackend}, provider=${cfg.embedding.provider}`,
@@ -294,26 +267,17 @@ export function createL1Runner(opts: {
   getInstanceId?: () => string | undefined;
   /** Host-neutral LLM runner for L1 extraction (standalone/gateway mode). */
   llmRunner?: import("../core/types.js").LLMRunner;
-  /** StorageAdapter for file operations (COS/local). */
-  storage?: StorageAdapter;
-}): (params: { sessionKey: string }) => Promise<{
-  processedCount: number;
-  storedCount: number;
-  /** True iff the over-fetch returned > L1_BATCH_PROCESS rows (i.e. there's residual past the cursor). */
-  hasMore: boolean;
-  /** True iff the over-fetch returned exactly L1_BATCH_QUERY rows (i.e. likely large backlog). */
-  hasFullBacklog: boolean;
-}> {
-  const { pluginDataDir, cfg, openclawConfig, vectorStore, embeddingService, logger, getInstanceId, llmRunner, storage } = opts;
+}): (params: { sessionKey: string }) => Promise<{ processedCount: number }> {
+  const { pluginDataDir, cfg, openclawConfig, vectorStore, embeddingService, logger, getInstanceId, llmRunner } = opts;
   const config = openclawConfig as Record<string, unknown> | undefined;
 
   return async ({ sessionKey }) => {
     if (!config && !llmRunner) {
       logger.debug?.(`${TAG} [l1] No OpenClaw config and no LLM runner, skipping L1 extraction`);
-      return { processedCount: 0, storedCount: 0, hasMore: false, hasFullBacklog: false };
+      return { processedCount: 0 };
     }
 
-    const checkpoint = new CheckpointManager(pluginDataDir, logger, storage);
+    const checkpoint = new CheckpointManager(pluginDataDir, logger);
     const cp = await checkpoint.read();
     const runnerState = checkpoint.getRunnerState(cp, sessionKey);
 
@@ -322,35 +286,30 @@ export function createL1Runner(opts: {
     );
 
     try {
-      // ── Step 1: over-fetch L0 from DB (or JSONL fallback) ──
-      //
-      // Pull at most L1_BATCH_QUERY (= 2N) rows past the cursor. We then keep
-      // the oldest L1_BATCH_PROCESS (= N) for actual processing and use the
-      // remaining rows merely as a *signal* to detect backlog. See file-level
-      // comment on L1_BATCH_PROCESS / L1_BATCH_QUERY for rationale.
-      type FlatMessage = ConversationMessage & { sessionId: string; recordedAtMs: number };
-      let flat: FlatMessage[] = [];
-      let queriedCount = 0;
+      let groups: Array<{ sessionId: string; messages: ConversationMessage[] }>;
+      let maxRecordedAtMs = 0;
 
       if (vectorStore && !vectorStore.isDegraded()) {
         const l1Cursor = runnerState.last_l1_cursor > 0
           ? runnerState.last_l1_cursor
           : undefined;
-        const dbGroups = await vectorStore.queryL0GroupedBySessionId(sessionKey, l1Cursor, L1_BATCH_QUERY);
+        const dbGroups = await vectorStore.queryL0GroupedBySessionId(sessionKey, l1Cursor);
+        groups = dbGroups.map((g) => ({
+          sessionId: g.sessionId,
+          messages: g.messages.map((m) => ({
+            id: m.id,
+            role: m.role as "user" | "assistant",
+            content: m.content,
+            timestamp: m.timestamp,
+          })),
+        }));
+        // Compute max recordedAtMs across all groups for cursor advancement
         for (const g of dbGroups) {
           for (const m of g.messages) {
-            flat.push({
-              id: m.id,
-              role: m.role as "user" | "assistant",
-              content: m.content,
-              timestamp: m.timestamp,
-              sessionId: g.sessionId,
-              recordedAtMs: m.recordedAtMs,
-            });
+            if (m.recordedAtMs > maxRecordedAtMs) maxRecordedAtMs = m.recordedAtMs;
           }
         }
-        queriedCount = flat.length;
-        logger.debug?.(`${TAG} [l1] L0 data source: VectorStore DB, fetched ${queriedCount} rows (limit=${L1_BATCH_QUERY})`);
+        logger.debug?.(`${TAG} [l1] L0 data source: VectorStore DB`);
       } else {
         logger.debug?.(`${TAG} [l1] L0 data source: JSONL files (VectorStore unavailable)`);
         const jsonlGroups = await readConversationMessagesGroupedBySessionId(
@@ -358,116 +317,28 @@ export function createL1Runner(opts: {
           pluginDataDir,
           runnerState.last_l1_cursor || undefined,
           logger,
-          L1_BATCH_QUERY,
+          50,
         );
-        // NOTE: readConversationMessagesGroupedBySessionId's `limit` semantic
-        // historically retains the **newest** N rows when truncating. That is
-        // wrong for our backlog-progress-by-cursor model. Since the JSONL path
-        // is a degraded fallback (only hit when VectorStore is unavailable),
-        // we accept this minor inconsistency for now and rely on the DB path
-        // being the production code path. Resort to oldest-first by sorting +
-        // re-slicing here as a best-effort.
+        groups = jsonlGroups.map((g) => ({
+          sessionId: g.sessionId,
+          messages: g.messages,
+        }));
+        // Compute max recordedAtMs from JSONL groups
         for (const g of jsonlGroups) {
           for (const m of g.messages) {
-            flat.push({
-              id: m.id,
-              role: m.role as "user" | "assistant",
-              content: m.content,
-              timestamp: m.timestamp,
-              sessionId: g.sessionId,
-              recordedAtMs: m.recordedAtMs,
-            });
+            if (m.recordedAtMs > maxRecordedAtMs) maxRecordedAtMs = m.recordedAtMs;
           }
         }
-        // Force chronological (oldest-first) ordering by recordedAtMs ↑ then timestamp ↑.
-        flat.sort((a, b) => (a.recordedAtMs - b.recordedAtMs) || (a.timestamp - b.timestamp));
-        queriedCount = flat.length;
       }
 
-      if (queriedCount === 0) {
+      if (groups.length === 0) {
         logger.debug?.(`${TAG} [l1] No new L0 messages for session ${sessionKey}`);
-        return { processedCount: 0, storedCount: 0, hasMore: false, hasFullBacklog: false };
+        return { processedCount: 0 };
       }
 
-      // Re-sort by recordedAtMs ascending (DB path returns ASC already, but
-      // groupBy may have permuted ordering across groups; this is cheap).
-      flat.sort((a, b) => (a.recordedAtMs - b.recordedAtMs) || (a.timestamp - b.timestamp));
-
-      // ── Step 2: slice the first L1_BATCH_PROCESS rows + same-ms boundary alignment ──
-      //
-      // To advance the cursor safely we must NOT split a group of rows that
-      // share the same recorded_at_ms. Otherwise the next round's filter
-      // `recorded_at_ms > cursor` would skip the trailing siblings of the
-      // boundary millisecond. Concretely: if rows 20 and 21 carry the same
-      // recordedAtMs, we extend the slice past row 21 (and any further siblings)
-      // until we hit a strictly greater recordedAtMs or exhaust the buffer.
-      //
-      // Cost: at most a handful of extra rows per round (bounded by how many
-      // siblings share one millisecond). Benefit: zero data loss across
-      // millisecond-collision boundaries (e.g. seed bulk-load, multi-message
-      // agent_end where all rows are stamped with one `now`).
-      let sliceEnd = Math.min(L1_BATCH_PROCESS, flat.length);
-      if (sliceEnd < flat.length) {
-        const boundaryMs = flat[sliceEnd - 1].recordedAtMs;
-        while (sliceEnd < flat.length && flat[sliceEnd].recordedAtMs === boundaryMs) {
-          sliceEnd++;
-        }
-      }
-      const processed = flat.slice(0, sliceEnd);
-
-      // ── Step 3: re-group sliced messages by sessionId (chronological within each group) ──
-      const groupMap = new Map<string, ConversationMessage[]>();
-      let maxRecordedAtMs = 0;
-      for (const m of processed) {
-        if (m.recordedAtMs > maxRecordedAtMs) maxRecordedAtMs = m.recordedAtMs;
-        let g = groupMap.get(m.sessionId);
-        if (!g) {
-          g = [];
-          groupMap.set(m.sessionId, g);
-        }
-        g.push({ id: m.id, role: m.role, content: m.content, timestamp: m.timestamp });
-      }
-      const groups: Array<{ sessionId: string; messages: ConversationMessage[] }> = [];
-      for (const [sessionId, messages] of groupMap) {
-        groups.push({ sessionId, messages });
-      }
-      // Sort groups by earliest timestamp so extractL1Memories sees them in
-      // the same order they were captured (matches pre-existing behavior).
-      groups.sort((a, b) => a.messages[0].timestamp - b.messages[0].timestamp);
-
-      // ── Step 4: backlog detection ──
-      //
-      // queriedCount is bounded by LIMIT L1_BATCH_QUERY (= 2N).
-      // sliceEnd may exceed L1_BATCH_PROCESS due to boundary alignment but
-      // never exceeds queriedCount.
-      //
-      //   - hasFullBacklog: queriedCount === L1_BATCH_QUERY AND there are
-      //     unprocessed rows in this batch (sliceEnd < queriedCount). DB
-      //     returned a full page → likely many more rows past the cursor;
-      //     pipeline-manager / executor enqueues the next L1 task immediately.
-      //   - hasMore: any unprocessed row in this batch (queriedCount > sliceEnd)
-      //     that is not also flagged as full backlog → small tail; defer to
-      //     the standard l1Idle timer.
-      //
-      // EDGE CASE: if queriedCount === L1_BATCH_QUERY and ALL 2N rows share a
-      // single recordedAtMs, boundary alignment cannot detect siblings beyond
-      // the LIMIT and `sliceEnd` will end up at queriedCount (everything
-      // processed, no unprocessed rows). The cursor advances to that ms; the
-      // next round's `> cursor` filter would skip any further same-ms siblings
-      // existing past the LIMIT. This is unreachable under realistic capture
-      // patterns (agent_end writes ≤ ~10 rows per `now`; seed assigns a fresh
-      // `now` per round). If hit, see TODO below for cursor-tiebreaker fix.
-      // TODO(known-issue): switch to (recorded_at, record_id) composite cursor
-      //   to defend against ≥2N rows sharing one recorded_at_ms.
-      const hasUnprocessedInBatch = queriedCount > sliceEnd;
-      const hasFullBacklog = queriedCount === L1_BATCH_QUERY && hasUnprocessedInBatch;
-      const hasMore = hasUnprocessedInBatch && !hasFullBacklog;
-
-      const totalMessages = processed.length;
+      const totalMessages = groups.reduce((sum, g) => sum + g.messages.length, 0);
       logger.info(
-        `${TAG} [l1] Processing ${totalMessages} L0 messages across ${groups.length} sessionId group(s) ` +
-        `for session ${sessionKey} (queried=${queriedCount}, sliceEnd=${sliceEnd}, ` +
-        `hasMore=${hasMore}, hasFullBacklog=${hasFullBacklog})`,
+        `${TAG} [l1] Processing ${totalMessages} L0 messages across ${groups.length} sessionId group(s) for session ${sessionKey}`,
       );
 
       let totalExtracted = 0;
@@ -498,7 +369,6 @@ export function createL1Runner(opts: {
           },
           logger,
           instanceId: getInstanceId?.(),
-          storage,
         });
 
         totalExtracted += l1Result.extractedCount;
@@ -508,15 +378,13 @@ export function createL1Runner(opts: {
         }
       }
 
-      // Use maxRecordedAtMs (write time) of the **processed** slice as cursor —
-      // always positive, TCVDB-safe. Boundary alignment guarantees we will not
-      // skip same-ms siblings on the next round.
+      // Use maxRecordedAtMs (write time) as cursor — always positive, TCVDB-safe
       await checkpoint.markL1ExtractionComplete(sessionKey, totalStored, maxRecordedAtMs || undefined, lastSceneName);
       logger.info(
         `${TAG} [l1] L1 complete: extracted=${totalExtracted}, stored=${totalStored} (${groups.length} group(s))`,
       );
 
-      return { processedCount: totalMessages, storedCount: totalStored, hasMore, hasFullBacklog };
+      return { processedCount: totalMessages };
     } catch (err) {
       logger.error(`${TAG} [l1] L1 failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
       throw err;
@@ -535,10 +403,9 @@ export function createL1Runner(opts: {
 export function createPersister(
   pluginDataDir: string,
   logger: PipelineLogger,
-  storage?: StorageAdapter,
 ): (states: Record<string, PipelineSessionState>) => Promise<void> {
   return async (states) => {
-    const checkpoint = new CheckpointManager(pluginDataDir, logger, storage);
+    const checkpoint = new CheckpointManager(pluginDataDir, logger);
     await checkpoint.mergePipelineStates(states);
   };
 }
@@ -565,10 +432,8 @@ export function createL2Runner(opts: {
   instanceId?: string;
   /** Host-neutral LLM runner for L2 scene extraction (standalone/gateway mode). Must have enableTools=true. */
   llmRunner?: import("../core/types.js").LLMRunner;
-  /** StorageAdapter for file operations (COS/local). */
-  storage?: StorageAdapter;
 }): L2Runner {
-  const { pluginDataDir, cfg, openclawConfig, vectorStore, logger, instanceId, llmRunner, storage } = opts;
+  const { pluginDataDir, cfg, openclawConfig, vectorStore, logger, instanceId, llmRunner } = opts;
   let profileBaseline = new Map<string, { version: number; contentMd5: string; createdAtMs: number }>();
 
   return async (sessionKey: string, cursor?: string) => {
@@ -584,7 +449,7 @@ export function createL2Runner(opts: {
     let records: Array<{ content: string; created_at: string; id: string; updatedAt: string }>;
 
     if (vectorStore?.pullProfiles && !vectorStore.isDegraded()) {
-      profileBaseline = await pullProfilesToLocal(pluginDataDir, vectorStore, logger, storage);
+      profileBaseline = await pullProfilesToLocal(pluginDataDir, vectorStore, logger);
     }
 
     if (vectorStore && !vectorStore.isDegraded()) {
@@ -598,7 +463,7 @@ export function createL2Runner(opts: {
         logger.debug?.(
           `${TAG} [L2] No new L1 records since cursor (session=${sessionKey}, updatedAfter=${cursor ?? "(full)"}), skipping scene extraction`,
         );
-        return { skipped: true };
+        return { skipped: true, latestCursor: cursor || undefined };
       }
 
       logger.debug?.(
@@ -612,12 +477,32 @@ export function createL2Runner(opts: {
         updatedAt: r.updatedAt,
       }));
     } else {
-      throw new Error(`${TAG} [L2] VectorStore unavailable — cannot read L1 memories for scene extraction (session=${sessionKey})`);
-    }
+      logger.debug?.(`${TAG} [L2] VectorStore unavailable, falling back to JSONL read (session=${sessionKey})`);
+      const { readMemoryRecords } = await import("../core/record/l1-reader.js");
+      let sessionRecords = await readMemoryRecords(sessionKey, pluginDataDir, logger);
 
-    if (records.length === 0) {
-      logger.debug?.(`${TAG} [L2] No new L1 records found (session=${sessionKey}), skipping scene extraction`);
-      return;
+      if (cursor) {
+        const beforeCount = sessionRecords.length;
+        sessionRecords = sessionRecords.filter((r) => {
+          const t = r.updatedAt || r.createdAt || "";
+          return t > cursor;
+        });
+        logger.debug?.(
+          `${TAG} [L2] JSONL time filter: ${beforeCount} → ${sessionRecords.length} record(s) (updatedAfter=${cursor})`,
+        );
+      }
+
+      if (sessionRecords.length === 0) {
+        logger.debug?.(`${TAG} [L2] No new L1 records found (JSONL fallback, session=${sessionKey}), skipping scene extraction`);
+        return { latestCursor: cursor || undefined };
+      }
+
+      records = sessionRecords.map((r) => ({
+        content: r.content,
+        created_at: r.createdAt,
+        id: r.id,
+        updatedAt: r.updatedAt,
+      }));
     }
 
     const extractor = new SceneExtractor({
@@ -629,7 +514,6 @@ export function createL2Runner(opts: {
       logger,
       instanceId,
       llmRunner,
-      storage,
     });
 
     const memories = records.map((r) => ({
@@ -638,7 +522,7 @@ export function createL2Runner(opts: {
       id: r.id,
     }));
 
-    const preCheckpoint = new CheckpointManager(pluginDataDir, logger, storage);
+    const preCheckpoint = new CheckpointManager(pluginDataDir, logger);
     const preState = await preCheckpoint.read();
     const preScenesProcessed = preState.scenes_processed;
     const preMemoriesSince = preState.memories_since_last_persona;
@@ -646,13 +530,7 @@ export function createL2Runner(opts: {
 
     const extractResult = await extractor.extract(memories);
     if (extractResult.success && extractResult.memoriesProcessed > 0) {
-      // Empty extraction: LLM ran but didn't produce any file changes — skip increment + cascade
-      if (extractResult.emptyExtraction) {
-        logger.warn(`${TAG} [L2] Extraction produced no file changes (empty run), skipping checkpoint increment`);
-        return { skipped: true };
-      }
-
-      const checkpoint = new CheckpointManager(pluginDataDir, logger, storage);
+      const checkpoint = new CheckpointManager(pluginDataDir, logger);
       const postState = await checkpoint.read();
       if (
         postState.scenes_processed < preScenesProcessed ||
@@ -675,7 +553,7 @@ export function createL2Runner(opts: {
       }
 
       if (vectorStore && supportsProfileSyncWrite(vectorStore)) {
-        await syncLocalProfilesToStore(pluginDataDir, vectorStore, profileBaseline, logger, storage);
+        await syncLocalProfilesToStore(pluginDataDir, vectorStore, profileBaseline, logger);
       }
       await checkpoint.incrementScenesProcessed();
 
@@ -711,17 +589,14 @@ export function createL3Runner(opts: {
   instanceId?: string;
   /** Host-neutral LLM runner for L3 persona generation (standalone/gateway mode). Must have enableTools=true. */
   llmRunner?: import("../core/types.js").LLMRunner;
-  /** StorageAdapter for file operations (COS/local). */
-  storage?: StorageAdapter;
 }): L3Runner {
-  const { pluginDataDir, cfg, openclawConfig, vectorStore, logger, instanceId, llmRunner, storage } = opts;
+  const { pluginDataDir, cfg, openclawConfig, vectorStore, logger, instanceId, llmRunner } = opts;
 
   return async () => {
     const trigger = new PersonaTrigger({
       dataDir: pluginDataDir,
       interval: cfg.persona.triggerEveryN,
       logger,
-      storage,
     });
 
     const { should, reason } = await trigger.shouldGenerate();
@@ -735,21 +610,12 @@ export function createL3Runner(opts: {
       return;
     }
 
-    // Guard: no scene files → nothing to generate from. Skip without marking
-    // checkpoint so cold-start trigger remains available for the next attempt.
-    const { readSceneIndex } = await import("../core/scene/scene-index.js");
-    const sceneIndex = await readSceneIndex(pluginDataDir, storage);
-    if (sceneIndex.length === 0) {
-      logger.info(`${TAG} [L3] No scene files available, skipping (checkpoint unchanged)`);
-      return;
-    }
-
     // Pull remote profiles to establish fresh baseline before generation.
     // This ensures syncLocalProfilesToStore() has correct baselineVersion
     // for the optimistic-lock check instead of defaulting to 0.
     let profileBaseline = new Map<string, { version: number; contentMd5: string; createdAtMs: number }>();
     if (vectorStore?.pullProfiles && !vectorStore.isDegraded()) {
-      profileBaseline = await pullProfilesToLocal(pluginDataDir, vectorStore, logger, storage);
+      profileBaseline = await pullProfilesToLocal(pluginDataDir, vectorStore, logger);
     }
 
     logger.info(`${TAG} [L3] Starting persona generation: ${reason}`);
@@ -761,25 +627,20 @@ export function createL3Runner(opts: {
       logger,
       instanceId,
       llmRunner,
-      storage,
     });
     const genResult = await generator.generateLocalPersona(reason);
-
-    const checkpoint = new CheckpointManager(pluginDataDir, logger, storage);
-    const cp = await checkpoint.read();
-    const personaMarker = cp.total_processed;
-
     if (!genResult) {
       logger.info(`${TAG} [L3] Persona generation skipped (no changes)`);
-      await checkpoint.markPersonaGenerated(personaMarker);
       return;
     }
 
     if (vectorStore && supportsProfileSyncWrite(vectorStore)) {
-      await syncLocalProfilesToStore(pluginDataDir, vectorStore, profileBaseline, logger, storage);
+      await syncLocalProfilesToStore(pluginDataDir, vectorStore, profileBaseline, logger);
     }
 
-    await checkpoint.markPersonaGenerated(personaMarker);
+    const checkpoint = new CheckpointManager(pluginDataDir, logger);
+    const cp = await checkpoint.read();
+    await checkpoint.markPersonaGenerated(cp.total_processed);
     logger.info(`${TAG} [L3] Persona generation succeeded`);
   };
 }
@@ -873,43 +734,4 @@ export async function createPipeline(opts: PipelineFactoryOptions): Promise<Pipe
   };
 
   return { scheduler, vectorStore, embeddingService, destroy };
-}
-
-// ============================
-// V2: StateBackend-based pipeline factory (需求 #8)
-// ============================
-
-import type { IStateBackend } from "../core/state/types.js";
-import { StatefulPipelineManager } from "./stateful-pipeline-manager.js";
-
-/**
- * Create a StatefulPipelineManager that uses IStateBackend for all state.
- *
- * Drop-in replacement for createPipelineManager() when running with an
- * externalized state backend.
- */
-export function createStatefulPipelineManager(
-  cfg: MemoryTdaiConfig,
-  stateBackend: IStateBackend,
-  instanceId: string,
-  logger: PipelineLogger,
-  sessionFilter?: SessionFilter,
-): StatefulPipelineManager {
-  return new StatefulPipelineManager(
-    {
-      everyNConversations: cfg.pipeline.everyNConversations,
-      enableWarmup: cfg.pipeline.enableWarmup,
-      l1: { idleTimeoutSeconds: cfg.pipeline.l1IdleTimeoutSeconds },
-      l2: {
-        delayAfterL1Seconds: cfg.pipeline.l2DelayAfterL1Seconds,
-        minIntervalSeconds: cfg.pipeline.l2MinIntervalSeconds,
-        maxIntervalSeconds: cfg.pipeline.l2MaxIntervalSeconds,
-        sessionActiveWindowHours: cfg.pipeline.sessionActiveWindowHours,
-      },
-    },
-    stateBackend,
-    instanceId,
-    logger,
-    sessionFilter ?? new SessionFilter([]),
-  );
 }

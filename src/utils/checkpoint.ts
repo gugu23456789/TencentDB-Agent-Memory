@@ -24,9 +24,9 @@
  * Writes use atomic tmp+rename to prevent corruption on crash.
  */
 
+import fs from "node:fs/promises";
+import path from "node:path";
 import { randomBytes } from "node:crypto";
-import type { StorageAdapter } from "../core/storage/adapter.js";
-import { StoragePaths } from "../core/storage/types.js";
 
 // ============================
 // Types
@@ -181,16 +181,9 @@ async function withFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<
 export class CheckpointManager {
   private filePath: string;
   private logger: CheckpointLogger;
-  private storage: StorageAdapter | undefined;
 
-  constructor(dataDir: string, logger?: CheckpointLogger, storage?: StorageAdapter) {
-    this.storage = storage;
-    if (storage) {
-      this.filePath = StoragePaths.checkpoint;
-    } else {
-      // Dynamic import path for fs-based mode is resolved in readRaw/writeRaw
-      this.filePath = `${dataDir}/.metadata/recall_checkpoint.json`;
-    }
+  constructor(dataDir: string, logger?: CheckpointLogger) {
+    this.filePath = path.join(dataDir, ".metadata", "recall_checkpoint.json");
     this.logger = logger ?? noopLogger;
   }
 
@@ -200,15 +193,7 @@ export class CheckpointManager {
 
   private async readRaw(): Promise<Checkpoint> {
     try {
-      let raw: string | null;
-      if (this.storage) {
-        raw = await this.storage.readFile(this.filePath);
-      } else {
-        const fs = await import("node:fs/promises");
-        raw = await fs.default.readFile(this.filePath, "utf-8");
-      }
-      if (!raw) return structuredClone(DEFAULT_CHECKPOINT);
-
+      const raw = await fs.readFile(this.filePath, "utf-8");
       const parsed = JSON.parse(raw) as Record<string, unknown>;
       // Merge with defaults for backward compat (old checkpoints lack new fields).
       // structuredClone avoids shallow-copy pitfall: without it, the nested
@@ -257,20 +242,13 @@ export class CheckpointManager {
     }
   }
 
-  /** Atomic write: write to tmp file, then rename into place (fs mode). Storage mode: direct overwrite. */
+  /** Atomic write: write to tmp file, then rename into place. */
   private async writeRaw(checkpoint: Checkpoint): Promise<void> {
-    const content = JSON.stringify(checkpoint, null, 2);
-    if (this.storage) {
-      await this.storage.writeFile(this.filePath, content);
-    } else {
-      const fs = await import("node:fs/promises");
-      const path = await import("node:path");
-      const dir = path.default.dirname(this.filePath);
-      await fs.default.mkdir(dir, { recursive: true });
-      const tmp = `${this.filePath}.tmp.${randomBytes(4).toString("hex")}`;
-      await fs.default.writeFile(tmp, content, "utf-8");
-      await fs.default.rename(tmp, this.filePath);
-    }
+    const dir = path.dirname(this.filePath);
+    await fs.mkdir(dir, { recursive: true });
+    const tmp = `${this.filePath}.tmp.${randomBytes(4).toString("hex")}`;
+    await fs.writeFile(tmp, JSON.stringify(checkpoint, null, 2), "utf-8");
+    await fs.rename(tmp, this.filePath);
   }
 
   // ============================
