@@ -15,7 +15,7 @@ import { CircuitOpenError } from "./types.js";
 // Rate-limit gate
 // ---------------------------------------------------------------------------
 
-describe("RateLimitGate — red-team", () => {
+describe("RateLimitGate - red-team", () => {
   it("recovers after rate-limit window expires", () => {
     vi.useFakeTimers();
     const gate = new RateLimitGate({ windowMs: 1000, maxCalls: 2, selfFallbackThreshold: 0 });
@@ -72,7 +72,7 @@ describe("RateLimitGate — red-team", () => {
 // Circuit-breaker gate
 // ---------------------------------------------------------------------------
 
-describe("CircuitBreakerGate — red-team", () => {
+describe("CircuitBreakerGate - red-team", () => {
   it("cooldown doubles when breaker re-opens repeatedly", () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
@@ -108,7 +108,7 @@ describe("CircuitBreakerGate — red-team", () => {
     vi.useRealTimers();
   });
 
-  it("recovers after cooldown — beforeCall no longer throws", () => {
+  it("recovers after cooldown - beforeCall no longer throws", () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const gate = new CircuitBreakerGate({
@@ -135,7 +135,7 @@ describe("CircuitBreakerGate — red-team", () => {
 // Concurrent / parallel calls
 // ---------------------------------------------------------------------------
 
-describe("Gate — parallel calls", () => {
+describe("Gate - parallel calls", () => {
   it("RateLimitGate handles concurrent beforeCall", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
@@ -178,7 +178,7 @@ describe("Gate — parallel calls", () => {
 // Boundary value tests
 // ---------------------------------------------------------------------------
 
-describe("RateLimitGate — boundary values", () => {
+describe("RateLimitGate - boundary values", () => {
   it("windowMs=0 never rate-limits (bucket stays empty)", () => {
     const gate = new RateLimitGate({ windowMs: 0, maxCalls: 3, selfFallbackThreshold: 0 });
 
