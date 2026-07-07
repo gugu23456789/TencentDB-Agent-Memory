@@ -324,7 +324,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v5
 
@@ -342,8 +342,9 @@ jobs:
         if: steps.cache-deps.outputs.cache-hit != 'true'
         run: npm ci --ignore-scripts
 
-      - name: Start Jaeger via Docker (Linux/macOS)
-        if: runner.os != 'Windows'
+      # ── Linux: Docker ──
+      - name: Start Jaeger via Docker (Linux)
+        if: runner.os == 'Linux'
         run: |
           docker run -d --name jaeger \
             -e COLLECTOR_OTLP_HTTP_HOST_PORT=:4318 \
@@ -352,6 +353,31 @@ jobs:
           echo "Waiting for Jaeger container..."
           sleep 5
 
+      # ── macOS: binary download ──
+      - name: Download & start Jaeger (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          JAEGER_VERSION="1.60.0"
+          curl -sL "https://github.com/jaegertracing/jaeger/releases/download/v${JAEGER_VERSION}/jaeger-all-in-one-${JAEGER_VERSION}-darwin-amd64.tar.gz" | tar xz
+          chmod +x jaeger-all-in-one-${JAEGER_VERSION}-darwin-amd64/jaeger-all-in-one
+          ./jaeger-all-in-one-${JAEGER_VERSION}-darwin-amd64/jaeger-all-in-one --collector.otlp.http.host-port=:4318 &
+          echo $! > /tmp/jaeger.pid
+          sleep 5
+
+      # ── Windows: binary download ──
+      - name: Download & start Jaeger (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $JAEGER_VERSION = "1.60.0"
+          $URL = "https://github.com/jaegertracing/jaeger/releases/download/v${JAEGER_VERSION}/jaeger-all-in-one-${JAEGER_VERSION}-windows-amd64.zip"
+          Invoke-WebRequest -Uri $URL -OutFile "jaeger.zip"
+          Expand-Archive -Path "jaeger.zip" -DestinationPath "." -Force
+          $exe = ".\jaeger-all-in-one-${JAEGER_VERSION}-windows-amd64\jaeger-all-in-one.exe"
+          Start-Process -FilePath $exe -ArgumentList "--collector.otlp.http.host-port=:4318" -NoNewWindow -PassThru
+          Start-Sleep -Seconds 5
+
+      # ── Wait for readiness ──
       - name: Wait for Jaeger readiness (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
@@ -364,15 +390,42 @@ jobs:
             sleep 2
           done
           echo "Jaeger did not start"
-          docker logs jaeger 2>/dev/null || true
           exit 1
 
+      - name: Wait for Jaeger readiness (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $retries = 15
+          for ($i = 1; $i -le $retries; $i++) {
+            try {
+              $r = Invoke-RestMethod -Uri "http://localhost:16686/api/services" -UseBasicParsing
+              Write-Output "Jaeger ready"
+              exit 0
+            } catch {
+              Write-Output "Waiting for Jaeger... ($i/$retries)"
+              Start-Sleep -Seconds 2
+            }
+          }
+          Write-Output "Jaeger did not start"
+          exit 1
+
+      # ── Run verification ──
       - name: Run OTLP verify script (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
           TDAI_OTEL_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
           npx tsx scripts/otlp-verify.ts
 
+      - name: Run OTLP verify script (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:TDAI_OTEL_ENABLED = "true"
+          $env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:4318"
+          npx tsx scripts/otlp-verify.ts
+
+      # ── Verify ──
       - name: Verify trace received by Jaeger (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
@@ -388,6 +441,33 @@ jobs:
             echo "⚠️  Jaeger API not reachable (non-fatal)"
           fi
 
-      - name: Cleanup Jaeger (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Verify trace received by Jaeger (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Start-Sleep -Seconds 2
+          try {
+            $r = Invoke-RestMethod -Uri "http://localhost:16686/api/traces?service=bridge-mcp&lookback=5m" -UseBasicParsing
+            $count = ($r.data | Measure-Object).Count
+            if ($count -gt 0) {
+              Write-Output "✅ Jaeger received $count trace(s)"
+            } else {
+              Write-Output "⚠️  No traces found in Jaeger (may be delayed)"
+            }
+          } catch {
+            Write-Output "⚠️  Jaeger API not reachable (non-fatal)"
+          }
+
+      # ── Cleanup ──
+      - name: Cleanup Jaeger (Linux)
+        if: runner.os == 'Linux'
         run: docker rm -f jaeger 2>/dev/null || true
+
+      - name: Cleanup Jaeger (macOS)
+        if: runner.os == 'macOS'
+        run: pkill -F /tmp/jaeger.pid 2>/dev/null || true
+
+      - name: Cleanup Jaeger (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Stop-Process -Name "jaeger-all-in-one" -Force -ErrorAction SilentlyContinue
