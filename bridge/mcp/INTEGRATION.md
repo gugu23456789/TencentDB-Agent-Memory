@@ -53,8 +53,8 @@ See `REDTEAM_FINDINGS.md` for full assessment (paper-supplement style).
 
 Key architectural finding: **stdio transport resets in-memory gates per process.**
 Rate limiting and circuit breaker are defense-in-depth against accidental abuse,
-not absolute barriers. Production deployments should use agentgateway (LF) for
-session-persistent enforcement.
+not absolute barriers. For session-persistent enforcement in high-volume deployments,
+gate-level persistence can be added without changing the transport.
 
 | Gate | Status | Details |
 |:---|:---:|:---|
@@ -164,15 +164,17 @@ const adapter = new TdaiMcpClient({
 });
 ```
 
-## agentgateway Integration
+## Deployment Architecture
 
-The MCP server implements the stdio contract. agentgateway (Linux Foundation AAIF,
-Solo.io/Microsoft/Apple/AWS) adds session-persistent auth/rate-limit/OPA/OTEL in production.
+The MCP server runs as a stdio subprocess. All 5 defense gates (G0-G4)
+are active on every request. No external proxy required.
 
 ```
-Production: MCP Client -agentgateway (persistent state) -bridge/mcp/server.py (stdio)
-Desktop: MCP Client -bridge/mcp/server.py (stdio, gates active)
+MCP Client → bridge/mcp/server.py (5 gates active) → TDAI Gateway
 ```
+
+For high-volume deployments, the gates can be supplemented with
+external rate-limit/circuit-breaker at the HTTP layer (Gateway side).
 
 ## MCP Client Configuration Examples
 
@@ -246,4 +248,5 @@ In Trae IDE Settings -MCP Servers -Add:
 The server speaks standard MCP stdio protocol (JSON-RPC 2.0). Any MCP-compatible client
 (Claude Desktop, Cursor, etc.) can connect using the same pattern.
 
-Integration testing requires agentgateway deployment -a deployment milestone, not a development one.
+Integration testing is done via the Python E2E test suite (`bridge/mcp/tests/test_e2e.py`,
+8 tests, mock Gateway). No external deployment required.

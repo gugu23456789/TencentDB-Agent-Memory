@@ -2,17 +2,14 @@
 MCP Health Check - Bridge MCP-compatible health endpoint with gate protection.
 
 Architecture:
-  Production: MCP Client -> agentgateway (auth/rate-limit/OTEL/OPA)
-                               +-- bridge/mcp_health.py (self-gated fallback)
-                               +-- TdaiAdapter.mcp_health() -> Gateway
-
-  Desktop:    MCP Client ----------------------> bridge/mcp_health.py (gates active)
+  MCP Client -> bridge/mcp_health.py (4 gates active)
+                 +-- TdaiAdapter -> Gateway
 
 Usage:
-    # Desktop (no auth required for loopback)
+    # Loopback mode (no api key required)
     python -m bridge.mcp_health
 
-    # Production (API key required)
+    # API key mode
     set MCP_BRIDGE_API_KEY=your-key
     python -m bridge.mcp_health
 """

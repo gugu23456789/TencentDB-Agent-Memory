@@ -13,4 +13,5 @@
 
 ## Recommendation
 Stdio gates provide defense-in-depth against accidental abuse (config errors, runaway loops).
-Production deployments should use agentgateway (LF/Solo.io) for session-persistent enforcement.
+For session-persistent enforcement in high-volume deployments, add gate-level persistence
+or external rate-limiting at the Gateway HTTP layer.
