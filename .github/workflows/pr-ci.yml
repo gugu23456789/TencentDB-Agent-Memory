@@ -353,28 +353,27 @@ jobs:
           echo "Waiting for Jaeger container..."
           sleep 5
 
-      # ── macOS: binary download ──
+      # ── macOS: binary download (v2.19.0) ──
       - name: Download & start Jaeger (macOS)
         if: runner.os == 'macOS'
         run: |
-          JAEGER_VERSION="1.60.0"
-          curl -sL "https://github.com/jaegertracing/jaeger/releases/download/v${JAEGER_VERSION}/jaeger-all-in-one-${JAEGER_VERSION}-darwin-amd64.tar.gz" | tar xz
-          chmod +x jaeger-all-in-one-${JAEGER_VERSION}-darwin-amd64/jaeger-all-in-one
-          ./jaeger-all-in-one-${JAEGER_VERSION}-darwin-amd64/jaeger-all-in-one --collector.otlp.http.host-port=:4318 &
+          JAEGER_VERSION="2.19.0"
+          curl -sL "https://github.com/jaegertracing/jaeger/releases/download/v${JAEGER_VERSION}/jaeger-${JAEGER_VERSION}-darwin-amd64.tar.gz" | tar xz
+          ./jaeger-${JAEGER_VERSION}-darwin-amd64/jaeger --collector.otlp.http.host-port=:4318 &
           echo $! > /tmp/jaeger.pid
           sleep 5
 
-      # ── Windows: binary download ──
+      # ── Windows: binary download (v2.19.0) ──
       - name: Download & start Jaeger (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $JAEGER_VERSION = "1.60.0"
-          $URL = "https://github.com/jaegertracing/jaeger/releases/download/v${JAEGER_VERSION}/jaeger-all-in-one-${JAEGER_VERSION}-windows-amd64.zip"
+          $JAEGER_VERSION = "2.19.0"
+          $URL = "https://github.com/jaegertracing/jaeger/releases/download/v${JAEGER_VERSION}/jaeger-${JAEGER_VERSION}-windows-amd64.zip"
           Invoke-WebRequest -Uri $URL -OutFile "jaeger.zip"
           Expand-Archive -Path "jaeger.zip" -DestinationPath "." -Force
-          $exe = ".\jaeger-all-in-one-${JAEGER_VERSION}-windows-amd64\jaeger-all-in-one.exe"
-          Start-Process -FilePath $exe -ArgumentList "--collector.otlp.http.host-port=:4318" -NoNewWindow -PassThru
+          $bin = ".\jaeger-${JAEGER_VERSION}-windows-amd64\jaeger.exe"
+          Start-Process -FilePath $bin -ArgumentList "--collector.otlp.http.host-port=:4318" -NoNewWindow -PassThru
           Start-Sleep -Seconds 5
 
       # ── Wait for readiness ──
@@ -470,4 +469,4 @@ jobs:
       - name: Cleanup Jaeger (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Stop-Process -Name "jaeger-all-in-one" -Force -ErrorAction SilentlyContinue
+        run: Stop-Process -Name "jaeger" -Force -ErrorAction SilentlyContinue
