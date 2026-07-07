@@ -1,4 +1,4 @@
-"""E2E test: Bridge server → BridgeAdapter → Mock Gateway → Gates.
+"""E2E test: Bridge server -> BridgeAdapter -> Mock Gateway -> Gates.
 
 Starts a mock Gateway HTTP server, feeds JSON-RPC to the Bridge server,
 and verifies the full pipeline: gates fire, adapter calls reach Gateway,
@@ -26,31 +26,31 @@ import pytest
 
 
 # ============================================================
-# Mock Gateway — returns responses matching TDAI Gateway format
+# Mock Gateway -- returns responses matching TDAI Gateway format
 # ============================================================
 
 _MOCK_RESPONSES: Dict[str, Dict[str, Any]] = {
-    # /v2/atomic/search → search_atomic()
+    # /v2/atomic/search -> search_atomic()
     "/v2/atomic/search": {
         "results": [
             {"content": "mock memory content about project plans", "type": "observation", "id": "m1"},
             {"content": "mock memory about coding patterns", "type": "observation", "id": "m2"},
         ]
     },
-    # /v2/core/read → read_core()
+    # /v2/core/read -> read_core()
     "/v2/core/read": {
         "code": 0,
         "content": "User core profile: interested in E2E testing and Python development",
     },
-    # /v2/scenario/ls → list_scenarios()
+    # /v2/scenario/ls -> list_scenarios()
     "/v2/scenario/ls": {"entries": []},
-    # /v2/conversation/add → add_conversation()
+    # /v2/conversation/add -> add_conversation()
     "/v2/conversation/add": {"code": 0, "l0_recorded": 1},
-    # /v2/conversation/query → query_conversation()
+    # /v2/conversation/query -> query_conversation()
     "/v2/conversation/query": {"code": 0, "messages": []},
-    # /v2/conversation/search → search_conversation()
+    # /v2/conversation/search -> search_conversation()
     "/v2/conversation/search": {"code": 0, "results": []},
-    # /health → health()
+    # /health -> health()
     "/health": {"status": "ok", "uptime": 42, "stores": {"vectorStore": True, "embeddingService": True}},
 }
 
@@ -127,7 +127,7 @@ def _bridge_call(mock_gateway_port: int, request: Dict[str, Any]) -> Dict[str, A
 
 
 # ============================================================
-# Tests — protocol + tools + gates
+# Tests -- protocol + tools + gates
 # ============================================================
 
 
