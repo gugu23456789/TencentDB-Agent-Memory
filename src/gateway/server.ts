@@ -1170,7 +1170,7 @@ export class TdaiGateway {
             const lastColon = member.lastIndexOf(":");
             const suffix = lastColon >= 0 ? member.slice(lastColon + 1) : "";
             sessionId = lastColon >= 0 ? member.slice(0, lastColon) : member;
-            taskType = suffix === "L2_schedule" ? "offload-l2" : suffix === "L1_idle" ? "offload-l1" : "L3";
+            taskType = suffix === "L2_schedule" ? "L2" : suffix === "L1_idle" ? "L1" : "L3";
             instanceId = this.config.instanceId ?? "default";
           }
           const now = Date.now();
