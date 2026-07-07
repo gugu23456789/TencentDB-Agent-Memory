@@ -3,7 +3,7 @@ MCP stdio server - wraps TdaiAdapter as MCP tools.
 
 Built-in gates (API key + rate limit + circuit breaker + audit) provide
 defense-in-depth for every request. MCP clients connect via stdin/stdout
-with a one-line config — no agentgateway or external proxy required.
+with a one-line config -- no agentgateway or external proxy required.
 
 Architecture:
   Desktop/Prod: MCP Client -> bridge/mcp/server.py (5 gates active)
