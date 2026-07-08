@@ -1,7 +1,7 @@
 # OTLP Pipeline Setup
 
 This document describes how to set up the OTLP observability pipeline
-for local development.
+for local development and how it's verified in CI across 3 platforms.
 
 ## Architecture
 
@@ -16,41 +16,20 @@ Bridge server (TS) ──OTLP/HTTP──► Jaeger (all-in-one)
 
 ## Prerequisites
 
-| Component | Status | Install |
-|-----------|--------|---------|
-| `@opentelemetry/api` | ✅ Done | `npm install @opentelemetry/api` |
-| `@opentelemetry/sdk-node` | ✅ Done | `npm install @opentelemetry/sdk-node` |
-| `@opentelemetry/exporter-trace-otlp-http` | ✅ Done | via npm |
-| `@opentelemetry/resources` | ✅ Done | via npm |
-| `@opentelemetry/semantic-conventions` | ✅ Done | via npm |
-| Jaeger all-in-one | ✅ v2.19.0 | `C:\Users\HP\Downloads\jaeger-2.19.0-windows-amd64\jaeger-2.19.0-windows-amd64\jaeger.exe` |
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `@opentelemetry/api` 1.x | ✅ | npm dependency |
+| `@opentelemetry/sdk-node` 0.54.x | ✅ | npm dependency |
+| `@opentelemetry/exporter-trace-otlp-http` | ✅ | npm dependency |
+| `@opentelemetry/resources` 1.30.x | ✅ | npm dependency |
+| `@opentelemetry/semantic-conventions` | ✅ | npm dependency |
+| Jaeger all-in-one v2.19.0 | ✅ | See platform-specific steps below |
+
+> **Note about OTel version:** v1.0.0 tag shipped with `@opentelemetry/resources@^2.7.1` (v2.x SDK) but the code uses `new Resource()` (v1.x API). This breaks OTel silently. The r3-v1 branch fixes this — details in issue #420.
 
 ## Step 1: Download Jaeger
 
-### Option A: Use existing local copy
-
-```powershell
-# Already downloaded at:
-C:\Users\HP\Downloads\jaeger-2.19.0-windows-amd64\jaeger-2.19.0-windows-amd64\jaeger.exe
-```
-
-### Option B: Download binary
-
-```powershell
-# Windows
-Invoke-WebRequest -Uri "https://download.jaegertracing.io/v2.19.0/jaeger-2.19.0-windows-amd64.tar.gz" -OutFile "tools\jaeger\jaeger-2.19.0-windows-amd64.tar.gz"
-
-# Extract (requires 7zip or tar)
-tar -xzf tools\jaeger\jaeger-2.19.0-windows-amd64.tar.gz -C tools\jaeger\
-```
-
-### Option B: Install via winget
-
-```powershell
-winget install --id=jaegertracing.jaeger -e
-```
-
-### Option C: Docker
+### Option A: Docker (Linux / macOS with Docker Desktop)
 
 ```bash
 docker run -d --name jaeger \
@@ -58,17 +37,35 @@ docker run -d --name jaeger \
   jaegertracing/all-in-one:latest
 ```
 
-## Step 2: Start Jaeger
+### Option B: Binary download (Cross-platform)
 
-```powershell
-# Navigate to jaeger directory
-cd C:\Users\HP\Downloads\jaeger-2.19.0-windows-amd64\jaeger-2.19.0-windows-amd64
+Download from [jaegertracing.io/download](https://www.jaegertracing.io/download/) v2.19.0:
 
-# Start with all-in-one config (validated working)
-.\jaeger.exe --config=all-in-one.yaml
+```bash
+# Linux (amd64)
+wget https://download.jaegertracing.io/v2.19.0/jaeger-2.19.0-linux-amd64.tar.gz
+tar -xzf jaeger-2.19.0-linux-amd64.tar.gz
+cd jaeger-2.19.0-linux-amd64
+
+# macOS (arm64)
+wget https://download.jaegertracing.io/v2.19.0/jaeger-2.19.0-darwin-arm64.tar.gz
+tar -xzf jaeger-2.19.0-darwin-arm64.tar.gz
+cd jaeger-2.19.0-darwin-arm64
+
+# Windows (amd64) via PowerShell
+Invoke-WebRequest -Uri "https://download.jaegertracing.io/v2.19.0/jaeger-2.19.0-windows-amd64.tar.gz" -OutFile "jaeger-2.19.0-windows-amd64.tar.gz"
+tar -xzf jaeger-2.19.0-windows-amd64.tar.gz
+cd jaeger-2.19.0-windows-amd64
 ```
 
-The config file (`all-in-one.yaml`):
+## Step 2: Start Jaeger
+
+```bash
+# All platforms: use the all-in-one binary or docker container
+./jaeger --config=all-in-one.yaml
+```
+
+Create `all-in-one.yaml`:
 
 ```yaml
 service:
@@ -109,48 +106,66 @@ Jaeger UI: http://localhost:16686
 
 ## Step 3: Configure Environment
 
-Set these environment variables before starting the Bridge server:
-
-```powershell
-# Enable OTel SDK in TS codebase
-$env:TDAI_OTEL_ENABLED = "true"
+```bash
+# Enable OTel SDK
+export TDAI_OTEL_ENABLED=true
 
 # Point to local Jaeger OTLP HTTP endpoint
-$env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:4318"
-$env:OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf"
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 
 # Service name for Jaeger UI
-$env:OTEL_SERVICE_NAME = "bridge-mcp"
+export OTEL_SERVICE_NAME=bridge-mcp
 ```
 
 ## Step 4: Verify the Pipeline
 
 ### 4.1 Check Jaeger is running
 
-```powershell
-curl.exe http://localhost:16686/api/services
+```bash
+curl http://localhost:16686/api/services
+# Expected: {"data":[],"total":0} (empty before first trace)
 ```
-Expected: `{"data":[],"total":0}` (empty before first trace).
 
-### 4.2 Run the Bridge server
-
-The AuditGate will call `getObservabilityBackend().trace.report()`
-on each flush interval (default: 5s). With `TDAI_OTEL_ENABLED=true`,
-the OTLP backend exports spans to the Jaeger collector.
+### 4.2 Start Gateway
 
 ```bash
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/call",\
-  "params":{"name":"tdai_health","arguments":{}}}' | \
-  python -m bridge.mcp.server
+npx tsx src/gateway/server.ts
 ```
 
-### 4.3 Check traces in Jaeger UI
+### 4.3 Send a capture to generate traces
 
-Open http://localhost:16686 in a browser.
+```bash
+curl -X POST http://localhost:8420/capture \
+  -H "Authorization: Bearer test-key" \
+  -H "Content-Type: application/json" \
+  -d '{"session_key":"test","user_content":"hello","assistant_content":"world"}'
+```
 
-1. Select service `bridge-mcp` from the dropdown
-2. Click "Find Traces"
-3. Audit events should appear as spans
+### 4.4 Check traces in Jaeger UI
+
+Open http://localhost:16686, select service `bridge-mcp`, click "Find Traces".
+
+## CI Verification (3 Platforms)
+
+The OTLP pipeline is automatically verified in CI on every push:
+
+| Platform | Jaeger method | Step | Status |
+|:---------|:-------------|:-----|:-------|
+| Linux (ubuntu-latest) | Docker container | Start → Wait → Push trace → Verify receipt | ✅ |
+| macOS (macos-latest) | Binary download | Download → Start → Check port → Push → Verify | ✅ |
+| Windows (windows-latest) | Binary download | Download → Start → Check port → Push → Verify | ✅ |
+
+The CI job (`OTLP Verify`) runs these steps:
+1. `npx tsx scripts/repro-l2-timer-bug.ts` — #416 31-unit regression suite
+2. `npx tsx scripts/verify-l2-pipeline-mock.ts` — L2/L3 full pipeline mock test
+3. `npm pack` + install from tarball — build artifact verification
+4. `pip wheel` + install — Python SDK build verification
+5. Start Jaeger + wait for readiness
+6. Run OTLP trace push script
+7. Verify trace received by Jaeger API
+
+Latest CI results: https://github.com/gugu23456789/TencentDB-Agent-Memory/actions/runs/28915652050
 
 ## Configuration Reference
 
@@ -167,6 +182,7 @@ Open http://localhost:16686 in a browser.
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | No traces in Jaeger | OTel SDK not enabled | Set `TDAI_OTEL_ENABLED=true` |
-| Connection refused on :4318 | Jaeger not running | Start jaeger.exe |
+| Connection refused on :4318 | Jaeger not running | Start jaeger binary/docker |
 | No `bridge-mcp` service | No traces sent yet | Run a tool call first |
 | OTLP endpoint mismatch | Protocol mismatch | Use `http/protobuf` for HTTP |
+| v1.0.0 tag: `Resource is not a constructor` | OTel SDK version mismatch | Align to `resources@^1.30.1` + `sdk-node@^0.54.0` (see issue #420) |
