@@ -374,23 +374,15 @@ jobs:
             exit 1
           fi
 
-      # ── Windows: binary download (v2.19.0) ──
+      # ── Windows: Docker (Docker Desktop available on windows-latest) ──
       - name: Download & start Jaeger (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $JAEGER_VERSION = "2.19.0"
-          $URL = "https://github.com/jaegertracing/jaeger/releases/download/v${JAEGER_VERSION}/jaeger-${JAEGER_VERSION}-windows-amd64.zip"
-          Invoke-WebRequest -Uri $URL -OutFile "jaeger.zip"
-          Expand-Archive -Path "jaeger.zip" -DestinationPath "." -Force
-          $bin = ".\jaeger-${JAEGER_VERSION}-windows-amd64\jaeger.exe"
-          $p = Start-Process -FilePath $bin -NoNewWindow -PassThru
-          Start-Sleep -Seconds 5
-          if ($p.HasExited) {
-            Write-Output "Jaeger process died on startup"
-            exit 1
-          }
-          Write-Output "Jaeger started (PID: $($p.Id))"
+          docker run -d --name jaeger -p 4318:4318 -p 16686:16686 jaegertracing/all-in-one:latest
+          Start-Sleep -Seconds 10
+          $r = docker ps -a --filter "name=jaeger" --format "{{.Status}}"
+          Write-Output "Container status: $r"
 
       # ── Wait for readiness ──
       - name: Wait for Jaeger readiness (Linux/macOS)
@@ -485,4 +477,4 @@ jobs:
       - name: Cleanup Jaeger (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Stop-Process -Name "jaeger" -Force -ErrorAction SilentlyContinue
+        run: docker rm -f jaeger 2>$null
