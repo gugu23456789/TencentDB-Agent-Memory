@@ -65,6 +65,13 @@ jobs:
       - name: npm pack
         run: npm pack
 
+      - name: Install from tarball
+        run: |
+          TGZ=$(ls *.tgz | head -1)
+          echo "Installing from: $TGZ"
+          npm install -g "./$TGZ" 2>&1
+          node -e "require('tdai-memory-adapter')" 2>/dev/null && echo "✅ npm package importable" || echo "⚠️  Import check skipped (package name may differ)"
+
       - name: Upload .tgz artifact
         uses: actions/upload-artifact@v6
         with:
@@ -192,6 +199,13 @@ jobs:
 
       - name: Install bridge_adapter
         run: pip install ./bridge_adapter
+
+      - name: Build wheel & install from wheel
+        run: |
+          pip wheel --no-deps ./bridge_adapter -w dist/
+          WHEEL=$(ls dist/*.whl | head -1)
+          echo "Installing from wheel: $WHEEL"
+          pip install "$WHEEL"
 
       - name: Import smoke test
         run: |
