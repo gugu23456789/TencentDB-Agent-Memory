@@ -405,9 +405,9 @@ jobs:
           # Check what ports it's listening on
           netstat -ano | Select-String "4318" | Write-Output
 
-      # ── Wait for readiness ──
-      - name: Wait for Jaeger readiness (Linux/macOS)
-        if: runner.os != 'Windows'
+      # ── Wait for readiness (Linux: Docker) ──
+      - name: Wait for Jaeger readiness (Linux)
+        if: runner.os == 'Linux'
         run: |
           for i in $(seq 1 15); do
             if curl -s http://localhost:16686/api/services > /dev/null 2>&1; then
@@ -420,23 +420,34 @@ jobs:
           echo "Jaeger did not start"
           exit 1
 
-      - name: Wait for Jaeger readiness (Windows)
+      # ── macOS: binary (already checked process is running) ──
+      - name: Wait for Jaeger readiness (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          for i in $(seq 1 15); do
+            if curl -s http://localhost:16686/api/services > /dev/null 2>&1; then
+              echo "Jaeger ready"
+              exit 0
+            fi
+            echo "Waiting for Jaeger... ($i/15)"
+            sleep 2
+          done
+          echo "Jaeger UI not reachable on :16686 (proceeding)"
+          # Non-fatal on macOS; OTLP :4318 may be up even if :16686 is not
+
+      # ── Windows: skip readiness check; let the verify script report failure ──
+      - name: Check if Jaeger is listening (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $retries = 15
-          for ($i = 1; $i -le $retries; $i++) {
-            try {
-              $r = Invoke-RestMethod -Uri "http://localhost:16686/api/services" -UseBasicParsing
-              Write-Output "Jaeger ready"
-              exit 0
-            } catch {
-              Write-Output "Waiting for Jaeger... ($i/$retries)"
-              Start-Sleep -Seconds 2
-            }
+          Start-Sleep -Seconds 2
+          # Check OTLP port 4318 (what we actually need), not UI port 16686
+          try {
+            $r = Invoke-RestMethod -Uri "http://localhost:4318" -UseBasicParsing -ErrorAction Stop
+            Write-Output "Jaeger OTLP HTTP port 4318 is responding"
+          } catch {
+            Write-Output "⚠️  Jaeger OTLP port 4318 not reachable (verify script will fail if needed)"
           }
-          Write-Output "Jaeger did not start"
-          exit 1
 
       # ── Run verification ──
       - name: Run OTLP verify script (Linux/macOS)
