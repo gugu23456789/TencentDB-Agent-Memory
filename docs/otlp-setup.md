@@ -165,7 +165,7 @@ The CI job (`OTLP Verify`) runs these steps:
 6. Run OTLP trace push script
 7. Verify trace received by Jaeger API
 
-Latest CI results: https://github.com/gugu23456789/TencentDB-Agent-Memory/actions/runs/28915652050
+Latest CI results: https://github.com/gugu23456789/TencentDB-Agent-Memory/actions/runs/28919026006
 
 ## Configuration Reference
 
