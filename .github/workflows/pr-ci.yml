@@ -374,15 +374,36 @@ jobs:
             exit 1
           fi
 
-      # ── Windows: Docker (Docker Desktop available on windows-latest) ──
+      # ── Windows: binary with debug logging ──
       - name: Download & start Jaeger (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          docker run -d --name jaeger -p 4318:4318 -p 16686:16686 jaegertracing/all-in-one:latest
-          Start-Sleep -Seconds 10
-          $r = docker ps -a --filter "name=jaeger" --format "{{.Status}}"
-          Write-Output "Container status: $r"
+          $JAEGER_VERSION = "2.19.0"
+          $URL = "https://github.com/jaegertracing/jaeger/releases/download/v${JAEGER_VERSION}/jaeger-${JAEGER_VERSION}-windows-amd64.zip"
+          Invoke-WebRequest -Uri $URL -OutFile "jaeger.zip"
+          Expand-Archive -Path "jaeger.zip" -DestinationPath "." -Force
+          # Show extracted files
+          Get-ChildItem -Path ".\jaeger-${JAEGER_VERSION}-windows-amd64" -Recurse | Select-Object Name, Length | Write-Output
+          $bin = ".\jaeger-${JAEGER_VERSION}-windows-amd64\jaeger.exe"
+          if (-not (Test-Path $bin)) {
+            $bin = ".\jaeger-2.19.0-windows-amd64\jaeger.exe"
+          }
+          Write-Output "Starting: $bin"
+          $log = ".\jaeger-stdout.log"
+          $err = ".\jaeger-stderr.log"
+          # Capture stderr so we can debug failures
+          $p = Start-Process -FilePath $bin -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError $err
+          Start-Sleep -Seconds 8
+          if ($p.HasExited) {
+            Write-Output "Jaeger exited with code $($p.ExitCode)"
+            if (Test-Path $log) { Write-Output "=== stdout ===" ; Get-Content $log }
+            if (Test-Path $err) { Write-Output "=== stderr ===" ; Get-Content $err }
+            exit 1
+          }
+          Write-Output "Jaeger running (PID: $($p.Id))"
+          # Check what ports it's listening on
+          netstat -ano | Select-String "4318" | Write-Output
 
       # ── Wait for readiness ──
       - name: Wait for Jaeger readiness (Linux/macOS)
@@ -477,4 +498,4 @@ jobs:
       - name: Cleanup Jaeger (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: docker rm -f jaeger 2>$null
+        run: Get-Process -Name "jaeger" -ErrorAction SilentlyContinue | Stop-Process -Force
