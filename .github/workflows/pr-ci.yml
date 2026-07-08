@@ -358,10 +358,22 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           JAEGER_VERSION="2.19.0"
-          curl -sL "https://github.com/jaegertracing/jaeger/releases/download/v${JAEGER_VERSION}/jaeger-${JAEGER_VERSION}-darwin-amd64.tar.gz" | tar xz
-          ./jaeger-${JAEGER_VERSION}-darwin-amd64/jaeger --collector.otlp.http.host-port=:4318 &
+          curl -sLO "https://github.com/jaegertracing/jaeger/releases/download/v${JAEGER_VERSION}/jaeger-${JAEGER_VERSION}-darwin-amd64.tar.gz"
+          tar xzf "jaeger-${JAEGER_VERSION}-darwin-amd64.tar.gz"
+          BINARY="./jaeger-${JAEGER_VERSION}-darwin-amd64/jaeger"
+          chmod +x "$BINARY"
+          ls -la "$BINARY"
+          "$BINARY" > /tmp/jaeger.log 2>&1 &
           echo $! > /tmp/jaeger.pid
+          echo "Jaeger PID: $(cat /tmp/jaeger.pid)"
           sleep 5
+          if kill -0 $(cat /tmp/jaeger.pid) 2>/dev/null; then
+            echo "Jaeger process is running"
+          else
+            echo "Jaeger process died. Log:"
+            cat /tmp/jaeger.log 2>/dev/null || echo "(no log)"
+            exit 1
+          fi
 
       # ── Windows: binary download (v2.19.0) ──
       - name: Download & start Jaeger (Windows)
