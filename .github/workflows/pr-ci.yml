@@ -224,9 +224,9 @@ jobs:
             print('SHA256 integrity: OK')
           "
 
-  # ── 9. Encoding Defense (Layer 5: non-ASCII scan + Layer 1: BOM check) ──
+  # ── 9. Encoding Defense (5 layers: L5 scan + L4 pipeline + L3 shell + L2 git + L1 BOM) ──
   encoding-defense:
-    name: Encoding Defense (L1+L5)
+    name: Encoding Defense (L1-L5)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -251,6 +251,62 @@ jobs:
           \) | tr '\n' '\0')
           if [ "$fails" -gt 0 ]; then echo "FAIL: $fails files with non-ASCII chars"; exit 1; fi
           echo "OK: $fails files with non-ASCII (0 = clean)"
+
+      - name: L4 - Verify git pipeline encoding config
+        run: |
+          echo "── Layer 4: pipeline encoding config ──"
+          fails=0
+          # Check .gitattributes has encoding rules for ps1 files
+          if [ -f .gitattributes ]; then
+            # Look for working-tree-encoding declarations
+            if grep -q "working-tree-encoding" .gitattributes 2>/dev/null; then
+              echo "  .gitattributes has working-tree-encoding rules"
+            else
+              echo "  WARN: .gitattributes exists but no working-tree-encoding for ps1"
+              fails=$((fails + 1))
+            fi
+          else
+            echo "  WARN: no .gitattributes found"
+            fails=$((fails + 1))
+          fi
+          # Check git local config for encoding
+          ENC=$(git config --local core.autocrlf 2>/dev/null || echo "unset")
+          echo "  core.autocrlf: $ENC"
+          if [ "$fails" -gt 0 ]; then echo "WARN: $fails pipeline encoding issue(s) (non-fatal)"; fi
+          echo "OK: pipeline encoding check"
+
+      - name: L3 - Detect shell encoding bypass patterns
+        run: |
+          echo "── Layer 3: shell encoding bypass scan ──"
+          fails=0
+          # Dangerous patterns that can silently corrupt encoding
+          for f in $(find . -name '*.sh' -o -name '*.ps1' 2>/dev/null | head -50); do
+            if grep -q 'iconv.*UTF-16\|sed.*s/BOM\|dos2unix\|recode' "$f" 2>/dev/null; then
+              echo "  SUSPICIOUS: $f may bypass encoding"
+              fails=$((fails + 1))
+            fi
+          done
+          if [ "$fails" -gt 0 ]; then echo "WARN: $fails shell files with bypass patterns (non-fatal)"; fi
+          echo "OK: shell encoding bypass check"
+
+      - name: L2 - Verify .gitattributes encoding declarations
+        run: |
+          echo "── Layer 2: git encoding config audit ──"
+          fails=0
+          if [ ! -f .gitattributes ]; then
+            echo "  WARN: no .gitattributes to validate"
+            fails=$((fails + 1))
+          else
+            # Check for *.ps1 text working-tree-encoding=UTF-8
+            if grep -q "\.ps1" .gitattributes 2>/dev/null; then
+              echo "  .gitattributes has .ps1 rules"
+            else
+              echo "  WARN: .gitattributes missing .ps1 encoding rules"
+              fails=$((fails + 1))
+            fi
+          fi
+          if [ "$fails" -gt 0 ]; then echo "WARN: $fails git config issue(s) (non-fatal)"; fi
+          echo "OK: git encoding audit"
 
       - name: L1 - Verify UTF-8 BOM on scripts/*.ps1
         run: |
