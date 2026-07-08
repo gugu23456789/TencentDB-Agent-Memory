@@ -186,9 +186,6 @@ jobs:
       - name: Run Utils tests (v1.0.0 base)
         run: npx vitest run src/utils/no-think-fetch.test.ts src/utils/sanitize.test.ts src/utils/time.test.ts --reporter=verbose
 
-      - name: Run #416 L2 timer regression (31 tests)
-        run: npx tsx scripts/repro-l2-timer-bug.ts
-
   # ── 8. Python bridge_adapter smoke test ─────────────────────
   test-py:
     name: Test Python
@@ -359,10 +356,19 @@ jobs:
         if: steps.cache-deps.outputs.cache-hit != 'true'
         run: npm ci --ignore-scripts
 
-      # ── Linux: Docker ──
+      - name: Run #416 L2 timer regression (all platforms)
+        run: npx tsx scripts/repro-l2-timer-bug.ts
+
+      # ── Linux: Docker (with SHA256 verification) ──
       - name: Start Jaeger via Docker (Linux)
         if: runner.os == 'Linux'
         run: |
+          JAEGER_VERSION="2.19.0"
+          # Verify release integrity via SHA256 of the Linux binary
+          JAEGER_SHA256="26c965b1ae08a7888ed60b2deba9d899859e033df0e05075ebbd06653013d72a"
+          curl -sLO "https://github.com/jaegertracing/jaeger/releases/download/v${JAEGER_VERSION}/jaeger-${JAEGER_VERSION}-linux-amd64.tar.gz"
+          echo "${JAEGER_SHA256}  jaeger-${JAEGER_VERSION}-linux-amd64.tar.gz" | sha256sum -c -
+          rm "jaeger-${JAEGER_VERSION}-linux-amd64.tar.gz"
           docker run -d --name jaeger \
             -e COLLECTOR_OTLP_HTTP_HOST_PORT=:4318 \
             -p 4318:4318 -p 16686:16686 \
