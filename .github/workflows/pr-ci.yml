@@ -353,16 +353,15 @@ jobs:
           echo "Waiting for Jaeger container..."
           sleep 5
 
-      # ── macOS: binary download (v2.19.0) ──
+      # ── macOS: binary download (v2.19.0, arm64) ──
       - name: Download & start Jaeger (macOS)
         if: runner.os == 'macOS'
         run: |
           JAEGER_VERSION="2.19.0"
-          curl -sLO "https://github.com/jaegertracing/jaeger/releases/download/v${JAEGER_VERSION}/jaeger-${JAEGER_VERSION}-darwin-amd64.tar.gz"
-          tar xzf "jaeger-${JAEGER_VERSION}-darwin-amd64.tar.gz"
-          BINARY="./jaeger-${JAEGER_VERSION}-darwin-amd64/jaeger"
+          curl -sLO "https://github.com/jaegertracing/jaeger/releases/download/v${JAEGER_VERSION}/jaeger-${JAEGER_VERSION}-darwin-arm64.tar.gz"
+          tar xzf "jaeger-${JAEGER_VERSION}-darwin-arm64.tar.gz"
+          BINARY="./jaeger-${JAEGER_VERSION}-darwin-arm64/jaeger"
           chmod +x "$BINARY"
-          ls -la "$BINARY"
           "$BINARY" > /tmp/jaeger.log 2>&1 &
           echo $! > /tmp/jaeger.pid
           echo "Jaeger PID: $(cat /tmp/jaeger.pid)"
@@ -385,8 +384,13 @@ jobs:
           Invoke-WebRequest -Uri $URL -OutFile "jaeger.zip"
           Expand-Archive -Path "jaeger.zip" -DestinationPath "." -Force
           $bin = ".\jaeger-${JAEGER_VERSION}-windows-amd64\jaeger.exe"
-          Start-Process -FilePath $bin -ArgumentList "--collector.otlp.http.host-port=:4318" -NoNewWindow -PassThru
+          $p = Start-Process -FilePath $bin -NoNewWindow -PassThru
           Start-Sleep -Seconds 5
+          if ($p.HasExited) {
+            Write-Output "Jaeger process died on startup"
+            exit 1
+          }
+          Write-Output "Jaeger started (PID: $($p.Id))"
 
       # ── Wait for readiness ──
       - name: Wait for Jaeger readiness (Linux/macOS)
