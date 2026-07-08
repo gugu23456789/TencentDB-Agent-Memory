@@ -359,6 +359,12 @@ jobs:
       - name: Run #416 L2 timer regression (all platforms)
         run: npx tsx scripts/repro-l2-timer-bug.ts
 
+      - name: Run #416 L2 integration test with mock LLM (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          npx tsx scripts/verify-l2-pipeline-mock.ts
+        timeout-minutes: 3
+
       # ── Linux: Docker (with SHA256 verification) ──
       - name: Start Jaeger via Docker (Linux)
         if: runner.os == 'Linux'
