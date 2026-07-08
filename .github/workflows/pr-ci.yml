@@ -369,10 +369,9 @@ jobs:
         shell: bash
         run: |
           npm pack 2>&1
-          TGZ=$(ls tdai-memory-adapter-*.tgz 2>/dev/null | head -1)
+          TGZ=$(ls tdai-memory-adapter-*.tgz 2>/dev/null | head -1 || echo "")
           if [ -z "$TGZ" ]; then echo "FAIL: no tarball produced"; exit 1; fi
-          echo "Packed: $TGZ ($(stat -c%s "$TGZ") bytes)"
-          # Verify tarball is installable
+          echo "Packed: $TGZ"
           npm install -g ./"$TGZ" 2>&1
           node -e "const m = require('tdai-memory-adapter'); console.log('Import OK:', Object.keys(m).length, 'exports')"
           npm uninstall -g tdai-memory-adapter 2>&1
@@ -382,11 +381,11 @@ jobs:
         shell: bash
         run: |
           cd bridge_adapter
-          pip install build 2>&1 | tail -1
-          python -m build --wheel 2>&1
-          WHL=$(ls dist/*.whl 2>/dev/null | head -1)
+          pip install build 2>&1 | tail -3
+          python3 -m build --wheel 2>&1 || python -m build --wheel 2>&1
+          WHL=$(ls dist/*.whl 2>/dev/null | head -1 || echo "")
           if [ -z "$WHL" ]; then echo "FAIL: no wheel produced"; exit 1; fi
-          echo "Wheel: $WHL ($(stat -c%s "$WHL") bytes)"
+          echo "Wheel: $WHL"
           pip install "$WHL" 2>&1
           pip show bridge-adapter 2>&1 | head -5
           pip uninstall -y bridge-adapter 2>&1
