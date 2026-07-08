@@ -82,42 +82,93 @@ function httpRequest(
 
 // ── 1. Start mock LLM server ──
 console.log("\n=== 1. Starting mock LLM server ===");
-const mockLLMResponses = {
-  // L1 extraction response: returns fake extracted memories as a SceneSegment array
-  // StandaloneLLMRunner sends to {baseUrl}/chat/completions (OpenAI-compatible)
-  "/chat/completions": JSON.stringify({
-    id: "mock-cmpl-1",
-    object: "chat.completion",
-    choices: [{
-      index: 0,
-      message: {
-        role: "assistant",
-        content: JSON.stringify([
-          {
-            scene_name: "Test Discussion",
-            message_ids: [1, 2],
-            memories: [
-              { content: "User asked about test topic", type: "episodic", priority: 50, source_message_ids: ["1"] },
-              { content: "Assistant provided test response", type: "episodic", priority: 50, source_message_ids: ["2"] },
-            ],
-          },
-        ]),
-      },
-      finish_reason: "stop",
-    }],
-  }),
-};
 
 const mockLLMServer = http.createServer((req, res) => {
-  // Log the request path for debugging
   const body: Buffer[] = [];
   req.on("data", (chunk) => body.push(chunk));
   req.on("end", () => {
     const reqBody = Buffer.concat(body).toString();
     console.log(`  [mock-llm] ← ${req.method} ${req.url}`);
 
-    // Match the response based on URL path
-    const response = mockLLMResponses[req.url ?? ""] ?? JSON.stringify({ choices: [{ message: { content: "{}" } }] });
+    // Parse request body to determine call type
+    let parsedBody: any;
+    try { parsedBody = JSON.parse(reqBody); } catch { parsedBody = null; }
+    const hasTools = parsedBody?.tools && Array.isArray(parsedBody.tools) && parsedBody.tools.length > 0;
+    const lastMsg = parsedBody?.messages?.[parsedBody.messages?.length - 1];
+    const isToolResult = lastMsg?.role === "tool";
+
+    let response: string;
+
+    if (hasTools && !isToolResult) {
+      // L2/L3 initial call (first turn of tool loop): return tool_calls
+      // The AI SDK's generateText() with createOpenAI(compatibility="compatible")
+      // expects standard OpenAI tool_calls in the response.
+      response = JSON.stringify({
+        id: "mock-cmpl-tool",
+        object: "chat.completion",
+        choices: [{
+          index: 0,
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [{
+              id: "call_write_scene",
+              type: "function",
+              function: {
+                name: "write",
+                arguments: JSON.stringify({
+                  path: "test-scene-001.md",
+                  content: `# Scene: Test Discussion\n\n**Created:** ${new Date().toISOString()}\n\nThis is a mock scene file generated to verify the L2 pipeline completes end-to-end.\n\n## Summary\nThe L2 timer correctly routed to the scene extractor, which called the LLM with tools=true. The mock LLM responded with a tool call, and the AI SDK executed the write tool.\n\n## Memories\n- User asked about test topic\n- Assistant provided test response`,
+                }),
+              },
+            }],
+          },
+          finish_reason: "tool_calls",
+        }],
+      });
+    } else if (isToolResult) {
+      // L2/L3 follow-up: tool was executed, return text summary
+      response = JSON.stringify({
+        id: "mock-cmpl-summary",
+        object: "chat.completion",
+        choices: [{
+          index: 0,
+          message: {
+            role: "assistant",
+            content: JSON.stringify({
+              scenes_created: 1,
+              scenes_updated: 0,
+              scene_files: ["test-scene-001.md"],
+              summary: "Mock scene generation completed successfully",
+            }),
+          },
+          finish_reason: "stop",
+        }],
+      });
+    } else {
+      // L1 or non-tool call: return SceneSegment array for L1 extraction
+      response = JSON.stringify({
+        id: "mock-cmpl-1",
+        object: "chat.completion",
+        choices: [{
+          index: 0,
+          message: {
+            role: "assistant",
+            content: JSON.stringify([
+              {
+                scene_name: "Test Discussion",
+                message_ids: [1, 2],
+                memories: [
+                  { content: "User asked about test topic", type: "episodic", priority: 50, source_message_ids: ["1"] },
+                  { content: "Assistant provided test response", type: "episodic", priority: 50, source_message_ids: ["2"] },
+                ],
+              },
+            ]),
+          },
+          finish_reason: "stop",
+        }],
+      });
+    }
 
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(response);
@@ -232,7 +283,7 @@ if (!captureAccepted) {
 
 // ── 6. Wait and check for L2 scene files ──
 console.log("\n=== 6. Waiting for L2 pipeline processing ===");
-const sceneDir = path.join(DATA_DIR, "storage", "scene_blocks");
+const sceneDir = path.join(DATA_DIR, "scene_blocks");
 let sceneFilesFound = false;
 
 for (let i = 0; i < 30; i++) {
