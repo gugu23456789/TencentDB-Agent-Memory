@@ -74,32 +74,28 @@ function httpRequest(
 // ── 1. Start mock LLM server ──
 console.log("\n=== 1. Starting mock LLM server ===");
 const mockLLMResponses = {
-  // L1 extraction response: returns fake extracted memories
-  "/v1/chat/completions": JSON.stringify({
+  // L1 extraction response: returns fake extracted memories as a SceneSegment array
+  // StandaloneLLMRunner sends to {baseUrl}/chat/completions (OpenAI-compatible)
+  "/chat/completions": JSON.stringify({
     id: "mock-cmpl-1",
     object: "chat.completion",
     choices: [{
       index: 0,
       message: {
         role: "assistant",
-        content: JSON.stringify({
-          memories: [
-            { id: "mem-1", text: "User asked about test topic", timestamp: Date.now() },
-            { id: "mem-2", text: "Assistant provided test response", timestamp: Date.now() },
-          ],
-          scenes: [
-            { id: "scene-1", title: "Test Discussion", description: "A test conversation about testing", timestamp: Date.now() },
-          ]
-        }),
+        content: JSON.stringify([
+          {
+            scene_name: "Test Discussion",
+            message_ids: [1, 2],
+            memories: [
+              { id: "mem-1", text: "User asked about test topic", timestamp: Date.now() },
+              { id: "mem-2", text: "Assistant provided test response", timestamp: Date.now() },
+            ],
+          },
+        ]),
       },
       finish_reason: "stop",
     }],
-  }),
-  // L2 scene generation response
-  "/v1/scenes": JSON.stringify({
-    scenes: [
-      { id: "scene-gen-1", title: "Generated Test Scene", summary: "Auto-generated scene from mock", confidence: 0.95 },
-    ],
   }),
 };
 
@@ -192,26 +188,37 @@ const captureBody = JSON.stringify({
   assistant_content: "This is a test response to verify the L2 pipeline timer mapping",
 });
 
-try {
-  const captureRes = await httpRequest(
-    `${GATEWAY_URL}/capture`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer test-gateway-key",
+// ECONNRESET resilience: retry capture up to 3 times with 2s backoff
+let captureAccepted = false;
+for (let retry = 0; retry < 3; retry++) {
+  try {
+    const captureRes = await httpRequest(
+      `${GATEWAY_URL}/capture`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer test-gateway-key",
+        },
       },
-    },
-    captureBody
-  );
-  console.log(`  Capture response: ${captureRes.status} — ${captureRes.data.slice(0, 200)}`);
-  if (captureRes.status === 200 || captureRes.status === 201 || captureRes.status === 202) {
-    ok("Capture request accepted");
-  } else {
-    notOk(`Capture returned ${captureRes.status}`);
+      captureBody
+    );
+    console.log(`  Capture response: ${captureRes.status} — ${captureRes.data.slice(0, 200)}`);
+     if (captureRes.status === 200 || captureRes.status === 201 || captureRes.status === 202) {
+      captureAccepted = true;
+      ok("Capture request accepted");
+      break;
+    } else {
+      console.log(`  Capture attempt ${retry + 1} returned status ${captureRes.status}, retrying...`);
+    }
+  } catch (err) {
+    console.log(`  Capture attempt ${retry + 1} failed: ${err instanceof Error ? err.message : String(err)}, retrying...`);
   }
-} catch (err) {
-  notOk("Capture request failed", String(err));
+  await sleep(2000);
+}
+
+if (!captureAccepted) {
+  notOk("Capture request failed after 3 retries");
 }
 
 // ── 6. Wait and check for L2 scene files ──
