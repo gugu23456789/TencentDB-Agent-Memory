@@ -66,7 +66,7 @@ jobs:
         run: npm pack
 
       - name: Upload .tgz artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: package-tarball
           path: "*.tgz"
@@ -120,7 +120,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download tarball
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: package-tarball
 
@@ -186,7 +186,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -260,7 +260,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
