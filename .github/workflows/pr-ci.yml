@@ -24,7 +24,7 @@ jobs:
           node-version: "24"
 
       - name: Cache node_modules
-        uses: actions/cache@v6
+        uses: actions/cache@v5
         id: cache-deps
         with:
           path: node_modules
@@ -51,7 +51,7 @@ jobs:
           node-version: "24"
 
       - name: Restore node_modules
-        uses: actions/cache@v6
+        uses: actions/cache@v5
         with:
           path: node_modules
           key: deps-${{ runner.os }}-${{ hashFiles('package.json') }}
@@ -73,7 +73,7 @@ jobs:
           node -e "require('tdai-memory-adapter')" 2>/dev/null && echo "�?npm package importable" || echo "⚠️  Import check skipped (package name may differ)"
 
       - name: Upload .tgz artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: package-tarball
           path: "*.tgz"
@@ -127,7 +127,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download tarball
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v4
         with:
           name: package-tarball
 
@@ -161,7 +161,7 @@ jobs:
           node-version: "24"
 
       - name: Restore node_modules
-        uses: actions/cache@v6
+        uses: actions/cache@v5
         with:
           path: node_modules
           key: deps-${{ runner.os }}-${{ hashFiles('package.json', 'package-lock.json') }}
@@ -193,7 +193,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -274,7 +274,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -347,7 +347,7 @@ jobs:
           node-version: "24"
 
       - name: Restore node_modules
-        uses: actions/cache@v6
+        uses: actions/cache@v5
         with:
           path: node_modules
           key: deps-${{ runner.os }}-${{ hashFiles('package.json', 'package-lock.json') }}
