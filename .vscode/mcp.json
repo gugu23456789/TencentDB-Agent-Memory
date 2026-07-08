@@ -1,0 +1,12 @@
+{
+  "inputs": [],
+  "mcpServers": {
+    "bridge-mcp": {
+      "command": "python",
+      "args": ["-m", "bridge.mcp.server"],
+      "env": {
+        "TDAI_ENDPOINT": "http://127.0.0.1:8420"
+      }
+    }
+  }
+}

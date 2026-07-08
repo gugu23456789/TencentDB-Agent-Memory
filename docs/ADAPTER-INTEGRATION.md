@@ -32,9 +32,11 @@ Third-party adapter (PR #359, #372, #378, #385, ...)
 
 ## Connection Model
 
-All adapters connect to TDAI through the Gateway HTTP API. There is no need to
-link against or import any TDAI TypeScript/Python SDK — a simple HTTP client is
-sufficient.
+All adapters connect to TDAI through the Gateway HTTP API, or through MCP stdio.
+There is no need to link against or import any TDAI TypeScript/Python SDK — a
+simple HTTP client or one-line MCP config is sufficient.
+
+### Option 1: HTTP (REST) — for programmatic access
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
@@ -45,13 +47,37 @@ sufficient.
 | `/session/end` | POST | End a session and flush buffers |
 | `/health` | GET | Health check |
 
-### Authentication
-
-If `GATEWAY_API_KEY` is configured, include it as a Bearer token:
+**Authentication:** If `GATEWAY_API_KEY` is configured, include it as a Bearer token:
 
 ```
 Authorization: Bearer <api_key>
 ```
+
+### Option 2: MCP stdio — for any MCP-compatible client
+
+One-line IDE/config integration. No code to write.
+
+```json
+{
+  "mcpServers": {
+    "bridge-mcp": {
+      "command": "python",
+      "args": ["-m", "bridge.mcp.server"],
+      "env": {
+        "TDAI_ENDPOINT": "http://127.0.0.1:8420",
+        "TDAI_API_KEY": "<your-key>"
+      }
+    }
+  }
+}
+```
+
+See `bridge/mcp/INTEGRATION.md` for multi-platform MCP configs.
+
+> **For Dify, Coze, LangFlow etc.:** If the platform supports MCP tools,
+> use Option 2 (MCP stdio) — it's the simplest integration path.
+> Otherwise, wrap the HTTP REST API (Option 1) as a platform tool.
+> Pattern A below is designed exactly for this use case.
 
 All adapters in the current active PRs use this same auth model.
 
@@ -72,8 +98,10 @@ adapter → HTTP client → Gateway (:8420) → TdaiCore
 
 Used by: PR #385 (rainforest888)
 
-Extend the existing `HostAdapter` interface from `src/core/types.ts`.
-~40-85 lines per adapter.
+Extend the `HostAdapter` interface from `src/core/types.ts`.
+~60-80 lines per adapter.
+
+See `src/adapters/standalone/host-adapter.ts` for the reference template.
 
 ```
 adapter → HostAdapter → TdaiCore (in-process)
@@ -81,10 +109,8 @@ adapter → HostAdapter → TdaiCore (in-process)
 
 ### Pattern C: MemoryPlatformAdapter (custom interface)
 
-Used by: PR #359 (coder-mtj)
-
-Define your own adapter interface and implement it for each platform.
-~20-50 lines per platform + shared infrastructure.
+Used by: PR #359 (coder-mtj). This is a PR-specific pattern — for new
+adapters, prefer Pattern A or D.
 
 ```
 adapter → PlatformAdapter → GatewayClient → Gateway → TdaiCore
@@ -169,10 +195,35 @@ is stable across both 0.3.x (upstream main) and v1.0.0 (r3-v1).
 3. Test against a running Gateway instance
 4. (Optional) Add your adapter's tests to the shared CI
 
-For TypeScript adapters using HostAdapter, see `src/adapters/claude-code/`
-(PR #385) as a reference — ~59 lines for a complete adapter.
+For TypeScript adapters using HostAdapter, see `src/adapters/standalone/host-adapter.ts`
+as a reference template — ~97 lines for a complete adapter.
 For HTTP-based adapters, see `src/adapters/codex/gateway-client.ts`
 (PR #378) as a reference — ~191 lines.
+
+## Community Adapter Program
+
+**Want to add TDAI support for your favorite IDE/agent framework?** Here's what you need:
+
+| Entry Point | Code | Best for | Status |
+|:------------|:----:|:---------|:------:|
+| HTTP REST (Pattern A) | ~100-200 lines in any language | Dify, Coze, custom platforms, non-TS tools | ✅ Ready |
+| MCP stdio (no code) | One config line | Any MCP-compatible IDE (Trae, Cursor, Claude Code, etc.) | ✅ Ready |
+| Python TdaiAdapter (Pattern D) | `bridge_adapter/` ~500 lines | Python agents (LangChain, CrewAI, etc.) | ✅ Ready |
+| TypeScript HostAdapter (Pattern B) | ~60-80 lines | TypeScript/Node.js environments | ✅ Template ready |
+
+**How to contribute:**
+1. Fork the repo
+2. Add your adapter following the pattern above
+3. Open a PR — we'll review within 48h
+4. Your adapter appears in the ecosystem list
+
+**Quick recommendation by platform:**
+| Platform | Suggested path | Difficulty |
+|:---------|:--------------|:----------:|
+| Trae IDE, Cursor, Claude Code | MCP stdio (zero code) | 🟢 Easy |
+| Dify, Coze, LangFlow | HTTP REST (Pattern A) | 🟢 Easy |
+| Any Python framework | TdaiAdapter (Pattern D) | 🟢 Easy |
+| Any TypeScript framework | HostAdapter (Pattern B) | 🟡 Medium |
 
 ## License
 

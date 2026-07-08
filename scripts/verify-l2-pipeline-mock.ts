@@ -187,17 +187,14 @@ ok("Gateway started and /health responded");
 // ── 5. Send capture ──
 console.log("\n=== 5. Sending capture request ===");
 const captureBody = JSON.stringify({
-  sessionId: "test-session-l2",
-  instanceId: "test-instance",
-  messages: [
-    { role: "user", content: "Hello, this is a test message for L2 pipeline verification" },
-    { role: "assistant", content: "This is a test response to verify the L2 pipeline timer mapping" },
-  ],
+  session_key: "test-session-l2",
+  user_content: "Hello, this is a test message for L2 pipeline verification",
+  assistant_content: "This is a test response to verify the L2 pipeline timer mapping",
 });
 
 try {
   const captureRes = await httpRequest(
-    `${GATEWAY_URL}/api/v1/capture`,
+    `${GATEWAY_URL}/capture`,
     {
       method: "POST",
       headers: {

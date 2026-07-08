@@ -1,0 +1,6 @@
+fix: ci encoding defense + npm ci peer deps
+
+- Replace non-ASCII chars (arrows, em dashes) in test_e2e.py with
+  ASCII equivalents to pass L5 encoding defense scan
+- Add --legacy-peer-deps to all npm ci commands in CI workflow to
+  resolve @opentelemetry/resources@1.9.0 / api@1.9.1 peer dep conflict

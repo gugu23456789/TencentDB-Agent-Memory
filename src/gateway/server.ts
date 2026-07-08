@@ -1280,12 +1280,23 @@ export class TdaiGateway {
     }
 
     // 1.5. Inject StatefulPipelineManager into Core (replaces legacy MemoryPipelineManager)
-    const { createStatefulPipelineManager } = await import("../utils/pipeline-factory.js");
+    const { StatefulPipelineManager } = await import("../utils/stateful-pipeline-manager.js");
     // Service mode: defaultInstanceId must NOT be "default"; all calls must provide explicit instanceId.
     // Standalone mode: uses configured instanceId or "default" as fallback.
     const instanceId = this.config.instanceId ?? (this.config.deployMode === "service" ? "__unset__" : "default");
-    const statefulManager = createStatefulPipelineManager(
-      this.config.memory,
+    const p = this.config.memory.pipeline;
+    const statefulManager = new StatefulPipelineManager(
+      {
+        everyNConversations: p.everyNConversations,
+        enableWarmup: p.enableWarmup,
+        l1: { idleTimeoutSeconds: p.l1IdleTimeoutSeconds },
+        l2: {
+          delayAfterL1Seconds: p.l2DelayAfterL1Seconds,
+          minIntervalSeconds: p.l2MinIntervalSeconds,
+          maxIntervalSeconds: p.l2MaxIntervalSeconds,
+          sessionActiveWindowHours: p.sessionActiveWindowHours,
+        },
+      },
       this.stateBackend,
       instanceId,
       this.logger,
