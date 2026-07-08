@@ -205,12 +205,17 @@ const gatewayEnv = {
   TDAI_OTEL_ENABLED: "false",
 };
 
-const gatewayProcess = spawn("npx", ["tsx", "src/gateway/server.ts"], {
-  cwd: process.cwd(),
-  env: gatewayEnv,
-  stdio: ["ignore", "pipe", "pipe"],
-  shell: true,
-});
+// Use node --import tsx (cross-platform, avoids npx .cmd resolution on Windows)
+const gatewayProcess = spawn(
+  "node",
+  ["--import", "tsx", "src/gateway/server.ts"],
+  {
+    cwd: process.cwd(),
+    env: gatewayEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+    shell: false,
+  }
+);
 
 let gatewayOutput = "";
 gatewayProcess.stdout?.on("data", (chunk: Buffer) => {
