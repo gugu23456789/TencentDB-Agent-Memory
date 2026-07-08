@@ -186,6 +186,9 @@ jobs:
       - name: Run Utils tests (v1.0.0 base)
         run: npx vitest run src/utils/no-think-fetch.test.ts src/utils/sanitize.test.ts src/utils/time.test.ts --reporter=verbose
 
+      - name: Run #416 L2 timer regression (31 tests)
+        run: npx tsx scripts/repro-l2-timer-bug.ts
+
   # ── 8. Python bridge_adapter smoke test ─────────────────────
   test-py:
     name: Test Python
@@ -372,7 +375,9 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           JAEGER_VERSION="2.19.0"
+          JAEGER_SHA256="1237a19ada25b2798035d256c3fcc616231c799baa9aaf5505595053552d8ef2"
           curl -sLO "https://github.com/jaegertracing/jaeger/releases/download/v${JAEGER_VERSION}/jaeger-${JAEGER_VERSION}-darwin-arm64.tar.gz"
+          echo "${JAEGER_SHA256}  jaeger-${JAEGER_VERSION}-darwin-arm64.tar.gz" | shasum -a256 -c -
           tar xzf "jaeger-${JAEGER_VERSION}-darwin-arm64.tar.gz"
           BINARY="./jaeger-${JAEGER_VERSION}-darwin-arm64/jaeger"
           chmod +x "$BINARY"
@@ -388,14 +393,20 @@ jobs:
             exit 1
           fi
 
-      # ── Windows: binary with debug logging ──
+      # ── Windows: binary with debug logging (v2.19.0) ──
       - name: Download & start Jaeger (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $JAEGER_VERSION = "2.19.0"
+          $JAEGER_SHA256 = "15060ada01a3ed481997d715c8c5f1224df01675d1e740ec6ad8daca198b46dc"
           $URL = "https://github.com/jaegertracing/jaeger/releases/download/v${JAEGER_VERSION}/jaeger-${JAEGER_VERSION}-windows-amd64.zip"
           Invoke-WebRequest -Uri $URL -OutFile "jaeger.zip"
+          if ((Get-FileHash "jaeger.zip" -Algorithm SHA256).Hash.ToLower() -ne $JAEGER_SHA256) {
+            Write-Output "❌ SHA256 mismatch for jaeger.zip"
+            exit 1
+          }
+          Write-Output "✅ SHA256 verified"
           Expand-Archive -Path "jaeger.zip" -DestinationPath "." -Force
           # Show extracted files
           Get-ChildItem -Path ".\jaeger-${JAEGER_VERSION}-windows-amd64" -Recurse | Select-Object Name, Length | Write-Output
