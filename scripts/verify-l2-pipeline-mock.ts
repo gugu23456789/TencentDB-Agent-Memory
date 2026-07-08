@@ -100,6 +100,15 @@ const mockLLMServer = http.createServer((req, res) => {
     let response: string;
 
     if (hasTools && !isToolResult) {
+      // Detect if this is L3 persona (asks to write persona.md) vs L2 scene extraction
+      const systemMsg = parsedBody?.messages?.find((m: any) => m.role === "system");
+      const isPersona = systemMsg?.content?.includes("persona.md");
+
+      const fileName = isPersona ? "persona.md" : "test-scene-001.md";
+      const fileContent = isPersona
+        ? `# Persona: Test User\n\n**Generated:** ${new Date().toISOString()}\n\n## Archetype\nCurious engineer\n\n## Background\nTest user for L2/L3 pipeline verification\n\n## Traits\n- Analytical\n- Detail-oriented\n- Prefers automation`
+        : `# Scene: Test Discussion\n\n**Created:** ${new Date().toISOString()}\n\nThis is a mock scene file generated to verify the L2 pipeline completes end-to-end.\n\n## Summary\nThe L2 timer correctly routed to the scene extractor, which called the LLM with tools=true. The mock LLM responded with a tool call, and the AI SDK executed the write tool.\n\n## Memories\n- User asked about test topic\n- Assistant provided test response`;
+
       // L2/L3 initial call (first turn of tool loop): return tool_calls
       // The AI SDK's generateText() with createOpenAI(compatibility="compatible")
       // expects standard OpenAI tool_calls in the response.
@@ -112,13 +121,13 @@ const mockLLMServer = http.createServer((req, res) => {
             role: "assistant",
             content: null,
             tool_calls: [{
-              id: "call_write_scene",
+              id: `call_write_${isPersona ? "persona" : "scene"}`,
               type: "function",
               function: {
                 name: "write",
                 arguments: JSON.stringify({
-                  path: "test-scene-001.md",
-                  content: `# Scene: Test Discussion\n\n**Created:** ${new Date().toISOString()}\n\nThis is a mock scene file generated to verify the L2 pipeline completes end-to-end.\n\n## Summary\nThe L2 timer correctly routed to the scene extractor, which called the LLM with tools=true. The mock LLM responded with a tool call, and the AI SDK executed the write tool.\n\n## Memories\n- User asked about test topic\n- Assistant provided test response`,
+                  path: fileName,
+                  content: fileContent,
                 }),
               },
             }],
@@ -315,8 +324,19 @@ if (sceneFilesFound) {
   }
 }
 
-// ── 7. Verify timer mapping fix (via Gateway output) ──
-console.log("\n=== 7. Verifying #416 fix in Gateway output ===");
+// ── 7. Verify persona.md (L3) was generated ──
+console.log("\n=== 7. Checking L3 persona generation ===");
+const personaPath = path.join(DATA_DIR, "persona.md");
+if (fs.existsSync(personaPath)) {
+  const content = fs.readFileSync(personaPath, "utf-8");
+  ok("L3 persona generation produced persona.md");
+  console.log(`  persona.md: ${content.length} chars`);
+} else {
+  warn("persona.md not generated (mock LLM format may not match persona prompt)");
+}
+
+// ── 8. Verify timer mapping fix (via Gateway output) ──
+console.log("\n=== 8. Verifying #416 fix in Gateway output ===");
 if (gatewayOutput.includes("offload-l2") && !gatewayOutput.includes("L2_schedule→offload-l2")) {
   console.log(`  ${WARN} Gateway may have used offload-l2 path (check logs)`);
 }

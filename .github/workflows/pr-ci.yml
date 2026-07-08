@@ -359,8 +359,7 @@ jobs:
       - name: Run #416 L2 timer regression (all platforms)
         run: npx tsx scripts/repro-l2-timer-bug.ts
 
-      - name: Run #416 L2 full pipeline mock integration test (Linux)
-        if: runner.os == 'Linux'
+      - name: Run #416 L2/L3 full pipeline mock integration test
         run: npx tsx scripts/verify-l2-pipeline-mock.ts
 
       # ── Linux: Docker (with SHA256 verification) ──
