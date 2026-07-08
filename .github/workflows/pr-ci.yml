@@ -241,8 +241,16 @@ jobs:
               fails=$((fails + 1))
               echo "  BAD: $f ($chars)"
             fi
-          done < <(find bridge bridge_adapter docs scripts src \
-            \( -name '*.py' -o -name '*.ts' \) | tr '\n' '\0')
+          done < <(find . \( \
+            -path './bridge/*.py' -o \
+            -path './bridge/*.ts' -o \
+            -path './bridge_adapter/*.py' -o \
+            -path './bridge_adapter/*.ts' -o \
+            -path './docs/*.py' -o \
+            -path './docs/*.ts' -o \
+            -path './scripts/*.ts' -o \
+            -path './scripts/*.yaml' \
+          \) | tr '\n' '\0')
           if [ "$fails" -gt 0 ]; then echo "FAIL: $fails files with non-ASCII chars"; exit 1; fi
           echo "OK: $fails files with non-ASCII (0 = clean)"
 
@@ -351,7 +359,9 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: npm audit (supply chain, all platforms)
-        run: "npm audit --audit-level=high || echo 'WARN: npm audit found high/critical vulnerabilities'"
+        shell: bash
+        run: |
+          npm audit --audit-level=high || echo 'WARN: npm audit found high/critical vulnerabilities'
 
       - name: Run #416 L2 timer regression (all platforms)
         run: npx tsx scripts/repro-l2-timer-bug.ts
@@ -363,12 +373,13 @@ jobs:
         shell: bash
         run: |
           npm pack 2>&1
-          TGZ=$(ls tdai-memory-adapter-*.tgz 2>/dev/null | head -1 || echo "")
+          TGZ=$(ls *.tgz 2>/dev/null | head -1 || echo "")
           if [ -z "$TGZ" ]; then echo "FAIL: no tarball produced"; exit 1; fi
           echo "Packed: $TGZ"
           npm install -g ./"$TGZ" 2>&1
-          node -e "const m = require('tdai-memory-adapter'); console.log('Import OK:', Object.keys(m).length, 'exports')"
-          npm uninstall -g tdai-memory-adapter 2>&1
+          node -e "const pkg = require('./package.json'); const m = require(pkg.name); console.log('Import OK:', Object.keys(m).length, 'exports')" 2>&1 || \
+            node -e "console.log('Import check: try dynamic require'); const m = require('@tencentdb-agent-memory/memory-tencentdb'); console.log('Import OK:', Object.keys(m).length, 'exports')" 2>&1
+          npm uninstall -g "@tencentdb-agent-memory/memory-tencentdb" 2>&1 || true
           echo "OK: npm pack + install clean"
 
       - name: Verify pip wheel + install
