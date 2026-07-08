@@ -123,49 +123,21 @@ const mockLLMServer = http.createServer((req, res) => {
 mockLLMServer.listen(MOCK_LLM_PORT);
 console.log(`  Mock LLM listening on :${MOCK_LLM_PORT}`);
 
-// ── 2. Write temporary Gateway config ──
-console.log("\n=== 2. Writing Gateway config ===");
-const configYaml = `
-server:
-  host: "0.0.0.0"
-  port: ${GATEWAY_PORT}
-
-llm:
-  baseUrl: "http://localhost:${MOCK_LLM_PORT}"
-  apiKey: "sk-mock"
-  model: "mock-model"
-
-storage:
-  dir: "${DATA_DIR.replace(/\\/g, "/")}/storage"
-
-state:
-  type: "filesystem"
-  dir: "${DATA_DIR.replace(/\\/g, "/")}/state"
-
-scanner:
-  intervalMs: 500
-
-worker:
-  pollMs: 200
-  concurrency: 2
-`;
-
-const configPath = path.join(DATA_DIR, "tdai-gateway.yaml");
-fs.mkdirSync(path.dirname(configPath), { recursive: true });
-fs.writeFileSync(configPath, configYaml);
-console.log(`  Config written to: ${configPath}`);
-
-// ── 3. Start Gateway process ──
-console.log("\n=== 3. Starting TDAI Gateway ===");
+// ── 2. Start Gateway process (no config file, all via env vars) ──
+console.log("\n=== 2. Starting TDAI Gateway ===");
 const gatewayEnv = {
   ...process.env,
   TDAI_DATA_DIR: DATA_DIR,
   TDAI_GATEWAY_API_KEY: "test-gateway-key",
+  TDAI_GATEWAY_PORT: String(GATEWAY_PORT),
   TDAI_LLM_BASE_URL: `http://localhost:${MOCK_LLM_PORT}`,
   TDAI_LLM_API_KEY: "sk-mock",
   TDAI_LLM_MODEL: "mock-model",
+  TDAI_LLM_MAX_TOKENS: "256",
   SCANNER_INTERVAL_MS: "500",
   WORKER_POLL_MS: "200",
+  // Skip observability setup
+  TDAI_OTEL_ENABLED: "false",
 };
 
 const gatewayProcess = spawn("npx", ["tsx", "src/gateway/server.ts"], {
