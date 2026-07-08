@@ -356,11 +356,41 @@ jobs:
         if: steps.cache-deps.outputs.cache-hit != 'true'
         run: npm ci --ignore-scripts
 
+      - name: npm audit (supply chain, all platforms)
+        run: npm audit --audit-level=high || echo 'WARN: npm audit found high/critical vulnerabilities'
+
       - name: Run #416 L2 timer regression (all platforms)
         run: npx tsx scripts/repro-l2-timer-bug.ts
 
       - name: Run #416 L2/L3 full pipeline mock integration test
         run: npx tsx scripts/verify-l2-pipeline-mock.ts
+
+      - name: Verify npm pack + install
+        shell: bash
+        run: |
+          npm pack 2>&1
+          TGZ=$(ls tdai-memory-adapter-*.tgz 2>/dev/null | head -1)
+          if [ -z "$TGZ" ]; then echo "FAIL: no tarball produced"; exit 1; fi
+          echo "Packed: $TGZ ($(stat -c%s "$TGZ") bytes)"
+          # Verify tarball is installable
+          npm install -g ./"$TGZ" 2>&1
+          node -e "const m = require('tdai-memory-adapter'); console.log('Import OK:', Object.keys(m).length, 'exports')"
+          npm uninstall -g tdai-memory-adapter 2>&1
+          echo "OK: npm pack + install clean"
+
+      - name: Verify pip wheel + install
+        shell: bash
+        run: |
+          cd bridge_adapter
+          pip install build 2>&1 | tail -1
+          python -m build --wheel 2>&1
+          WHL=$(ls dist/*.whl 2>/dev/null | head -1)
+          if [ -z "$WHL" ]; then echo "FAIL: no wheel produced"; exit 1; fi
+          echo "Wheel: $WHL ($(stat -c%s "$WHL") bytes)"
+          pip install "$WHL" 2>&1
+          pip show bridge-adapter 2>&1 | head -5
+          pip uninstall -y bridge-adapter 2>&1
+          echo "OK: pip wheel + install clean"
 
       # ── Linux: Docker (with SHA256 verification) ──
       - name: Start Jaeger via Docker (Linux)
