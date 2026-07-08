@@ -241,14 +241,8 @@ jobs:
               fails=$((fails + 1))
               echo "  BAD: $f ($chars)"
             fi
-          done < <(find . \( \
-            -path './bridge/*.py' -o \
-            -path './bridge/*.ts' -o \
-            -path './bridge_adapter/*.py' -o \
-            -path './bridge_adapter/*.ts' -o \
-            -path './docs/*.py' -o \
-            -path './docs/*.ts' \
-          \) | tr '\n' '\0')
+          done < <(find bridge bridge_adapter docs scripts src \
+            \( -name '*.py' -o -name '*.ts' \) | tr '\n' '\0')
           if [ "$fails" -gt 0 ]; then echo "FAIL: $fails files with non-ASCII chars"; exit 1; fi
           echo "OK: $fails files with non-ASCII (0 = clean)"
 
