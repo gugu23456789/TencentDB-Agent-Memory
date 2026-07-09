@@ -182,9 +182,13 @@ getObservabilityBackend().trace.report(event.action, {
 OTel SDK -> OTLP/HTTP -> Jaeger / SigNoz / Grafana
 ```
 
-**OTel version note:** v1.0.0 code uses `new Resource()` (v1.x API). The v1.x SDK
-line (`@opentelemetry/resources@^1.30.1`, `@opentelemetry/sdk-node@^0.54.0`) is
-required for compatibility. See `docs/otlp-setup.md` for full setup.
+**OTel version note:** v1.0.0 code uses `new Resource()` (v1.x API) but `package.json`
+shipped with `@opentelemetry/resources@^2.7.1` (v2.x). This API mismatch ([#420](https://github.com/TencentCloud/TencentDB-Agent-Memory/issues/420))
+breaks observability silently — `new Resource()` throws `TypeError`, the outer
+catch swallows it into `console.warn`, and no trace data ever leaves the process.
+The v1.x SDK line (`@opentelemetry/resources@^1.30.1`,
+`@opentelemetry/sdk-node@^0.54.0`) restores compatibility.
+See `docs/otlp-setup.md` for full setup.
 
 ## Configuration Model
 
