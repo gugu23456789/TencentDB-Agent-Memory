@@ -6,6 +6,7 @@
 
 [![npm](https://img.shields.io/npm/v/@tencentdb-agent-memory/memory-tencentdb?color=blue)](https://www.npmjs.com/package/@tencentdb-agent-memory/memory-tencentdb)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![License: MulanPSL v2](https://img.shields.io/badge/License-MulanPSL%20v2-blue.svg)](./LICENSE_MULAN)
 [![Node](https://img.shields.io/badge/node-%3E=22.16-brightgreen)](https://nodejs.org/)
 [![OpenClaw](https://img.shields.io/badge/OpenClaw-%3E=2026.3.13-orange)](https://github.com/openclaw/openclaw)
 [![Hermes](https://img.shields.io/badge/Hermes-Gateway-7B61FF)](https://hermes-agent.nousresearch.com/docs/)
