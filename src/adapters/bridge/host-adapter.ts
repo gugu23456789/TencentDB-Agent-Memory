@@ -8,7 +8,7 @@
  * and the MCP stdio server (bridge/mcp/server.py).
  *
  * To add a new platform adapter, copy this file, rename the class, and
- * fill in the three HostAdapter methods. ~60 lines is all you need.
+ * fill in the HostAdapter methods + session-level helpers. ~60 lines base.
  *
  * Community: https://github.com/TencentCloud/TencentDB-Agent-Memory
  */
@@ -90,5 +90,22 @@ export class BridgeHostAdapter implements HostAdapter {
       };
     }
     return this.runnerFactory;
+  }
+
+  /**
+   * Build a RuntimeContext for a specific session.
+   * Used by TdaiCore per-hook to scope each call to the correct session.
+   */
+  buildRuntimeContextForSession(sessionKey: string, sessionId?: string): RuntimeContext {
+    return {
+      ...this.getRuntimeContext(),
+      sessionKey,
+      sessionId: sessionId ?? "",
+    };
+  }
+
+  /** Get the resolved data directory. */
+  getDataDir(): string {
+    return this.dataDir;
   }
 }

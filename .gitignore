@@ -9,6 +9,7 @@ workspace/
 
 # Test caches
 __tests__/soak/.model-cache/
+.tdai-e2e-test/
 
 # Python cache
 __pycache__/
